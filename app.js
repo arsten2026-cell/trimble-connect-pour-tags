@@ -330,6 +330,13 @@
     }
     return g._pieces;
   }
+  // Row detail: the Tekla parts of the pour (optional Parts/Елементи), first few, full list on hover.
+  function partsLine(parts) {
+    const all = L.formatEmbeds(parts);
+    const shown = parts.slice(0, 3);
+    const more = parts.length - shown.length;
+    return `<div class="sub" title="${esc(all)}">Parts: ${esc(L.formatEmbeds(shown))}${more > 0 ? ` +${more} more` : ""}</div>`;
+  }
   function inspectRow(g, i) {
     const pcs = piecesOf(g);
     const items = pcs.map((o, j) => {
@@ -337,6 +344,7 @@
       const type = String(pr[L.P.type] || "–").split("/")[0];
       const fs = L.num(pr[L.P.fwSides]), fb = L.num(pr[L.P.fwBottom]), rb = L.num(pr[L.P.rebar]);
       const emb = String(pr[L.P.embeds] || "").trim();
+      const parts = L.parseParts(pr[L.P.parts]);   // optional field; [] in older exports
       const k = objKey(o);
       const open = state.openPieces.has(k);
       const focused = state.focusPiece === k;
@@ -344,7 +352,9 @@
       if (fs || fb) bits.push(`кофр. ${f1(fs)} + ${f1(fb)} m²`);
       if (rb) bits.push(`${f0(rb)} kg`);
       return `<li class="${focused ? "focused" : ""}">
-          <div><span class="pno">${j + 1}</span> <b>${esc(type)}</b> · ${bits.join(" · ")}</div>
+          ${parts.length
+            ? `<div><span class="pno">${j + 1}</span> <b>${esc(L.formatEmbeds(parts))}</b></div><div class="sub pdet">${esc(type)} · ${bits.join(" · ")}</div>`
+            : `<div><span class="pno">${j + 1}</span> <b>${esc(type)}</b> · ${bits.join(" · ")}</div>`}
           ${emb ? `<div class="sub">Embeds ${esc(emb)}</div>` : ""}
           ${g.models.length > 1 ? `<div class="sub">${esc(L.shortModelName(o.modelName || o.modelId))}</div>` : ""}
           <div class="acts"><button class="small secondary" data-act="pSelect" data-i="${i}" data-j="${j}">Select</button><button
@@ -391,6 +401,7 @@
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span><button
               class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="List the pieces this pour is made of">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
             <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
+            ${g.parts.length ? partsLine(g.parts) : ""}
             ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
             <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
               class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
@@ -531,7 +542,7 @@
 
   if (window.parent === window) {
     if (/[?&]demo\b/.test(location.search)) {
-      const s = document.createElement("script"); s.src = "demo.js"; document.body.appendChild(s);
+      const s = document.createElement("script"); s.src = "demo.js?t=" + Date.now(); document.body.appendChild(s);
     } else {
       setStatus("Not inside Trimble Connect. Add this extension to a project and open it from the 3D viewer side panel.", true);
     }

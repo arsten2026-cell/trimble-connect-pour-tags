@@ -20,6 +20,7 @@
     fwSides: "Formwork_Sides/Кофраж_Страни",
     fwBottom: "Formwork_Bottom/Кофраж_Дъно",
     embeds: "Embedded_Parts/Закладни_Части",
+    parts: "Parts/Елементи",   // optional (newer Arsten_PourExport): "<name> <profile> [<pos>] xN; ..."
     date: "Pour_Data_Date/Дата_Данни",
   };
 
@@ -111,6 +112,21 @@
     return out;
   }
 
+  /** Parse the optional Parts/Елементи text: "Footing/Единични Фундаменти 1400*1400 [F1] x2; Pedestal ... [C3]"
+   *  -> [{code: "Footing/Единични Фундаменти 1400*1400 [F1]", count: 2}, ...]. Items are separated by ";" only,
+   *  and a count must be written " xN" (with a space), so profiles such as 600.00*400.00 stay intact. */
+  function parseParts(text) {
+    const out = [];
+    for (const piece of str(text).split(/[;\n]/)) {
+      const t = piece.trim();
+      if (!t) continue;
+      const m = t.match(/^(.*\S)\s+[x×]\s*(\d+)$/i);
+      if (m) out.push({ code: m[1].trim(), count: parseInt(m[2], 10) });
+      else out.push({ code: t, count: 1 });
+    }
+    return out;
+  }
+
   /** Merge embed lists, summing counts per code, keeping first-seen order. */
   function mergeEmbeds(lists) {
     const map = new Map();
@@ -148,7 +164,7 @@
         bucket.set(k, {
           key: k, label: key ? k : label, numbered: !!key, objects: [],
           totals: { volume: 0, rebar: 0, fwSides: 0, fwBottom: 0 },
-          _embeds: [], types: new Set(), materials: new Set(), phases: new Set(), models: new Set(), date: "",
+          _embeds: [], _parts: [], types: new Set(), materials: new Set(), phases: new Set(), models: new Set(), date: "",
         });
       }
       const g = bucket.get(k);
@@ -158,6 +174,7 @@
       g.totals.fwSides += num(pr[P.fwSides]);
       g.totals.fwBottom += num(pr[P.fwBottom]);
       g._embeds.push(parseEmbeds(pr[P.embeds]));
+      g._parts.push(parseParts(pr[P.parts]));
       if (str(pr[P.type])) g.types.add(str(pr[P.type]));
       if (str(pr[P.material])) g.materials.add(str(pr[P.material]));
       if (str(pr[P.phase])) g.phases.add(str(pr[P.phase]));
@@ -166,7 +183,8 @@
     }
     const finish = (g) => {
       g.embeds = mergeEmbeds(g._embeds);
-      delete g._embeds;
+      g.parts = mergeEmbeds(g._parts);   // [] for older exports without Parts/Елементи
+      delete g._embeds; delete g._parts;
       g.types = [...g.types]; g.materials = [...g.materials]; g.phases = [...g.phases]; g.models = [...g.models];
       g.anchorObject = pickAnchorObject(g.objects);
       return g;
@@ -383,7 +401,7 @@
   }
 
   return {
-    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
+    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });
