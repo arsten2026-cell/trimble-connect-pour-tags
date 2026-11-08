@@ -27,7 +27,10 @@
   th, td { padding:5px 4px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
   th { font-size:11px; font-weight:600; color:var(--muted); }
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  td.acts { white-space:nowrap; text-align:right; }
+  /* Tag | Select | Focus: one compact segmented group under the pour name */
+  .acts { margin-top:4px; white-space:nowrap; }
+  .acts button.small { padding:1px 8px; font-size:11.5px; }
+  .acts button.small + button.small { margin-left:-1px; }
   .sw { display:inline-block; width:10px; height:10px; margin-right:5px; vertical-align:-1px; border:1px solid rgba(0,0,0,.25); }
   .name { font-weight:600; white-space:nowrap; }
   .sub { font-size:11px; color:var(--muted); }
@@ -45,6 +48,7 @@
   <button id="btnShowAll" disabled>Show all tags</button>
   <button id="btnClear" class="secondary" disabled>Clear tags</button>
   <button id="btnReload" class="secondary" disabled title="Read the pours again from the loaded models">Reload</button>
+  <button id="btnClearFocus" class="on" hidden title="Make every object opaque again">Clear focus</button>
 </div>
 <div class="bar">
   <label class="chk"><input type="checkbox" id="chkColour"> Colour each pour</label>
@@ -66,8 +70,8 @@
 
 <h2>Pours</h2>
 <table>
-  <thead><tr><th>Pour</th><th class="num">m³</th><th class="num">kg</th><th></th></tr></thead>
-  <tbody id="rows"><tr><td colspan="4" class="empty">No pours loaded yet.</td></tr></tbody>
+  <thead><tr><th>Pour</th><th class="num">m³</th><th class="num">kg</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="3" class="empty">No pours loaded yet.</td></tr></tbody>
   <tfoot id="foot"></tfoot>
 </table>
 
@@ -80,6 +84,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/trimble-connect-workspace-api@0.3.38/dist/iife/trimbleconnect.workspace.api.js" integrity="sha384-lFiNt/56q6HnUNbuy0WHO3NP6BkQjY4EH8+5eELYVfnhkB42snRTmSa3UOAlX9gg" crossorigin="anonymous"></script>
 <script src="pours.js?v=5"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

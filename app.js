@@ -182,10 +182,31 @@
       await api.viewer.setObjectState(undefined, { visible: "reset" });
     }
   }
-  async function zoomTo(g) {
+  // Select: select the pour's objects (properties panel shows them) and zoom to them.
+  async function selectPour(g) {
     const sel = selectorFor(g.objects);
     await state.api.viewer.setSelection(sel, "set");
     await state.api.viewer.setCamera(sel, { animationTime: 600 });
+  }
+
+  // Focus: zoom to the pour and ghost everything else. Opacity is 0..1 in Connect (verified live).
+  // Clicking Focus on the focused pour again, or "Clear focus", restores full opacity.
+  const FOCUS_OPACITY = 0.25;
+  async function focusPour(g) {
+    const api = state.api;
+    if (state.focusKey === g.key) return clearFocus();
+    const sel = selectorFor(g.objects);
+    await api.viewer.setObjectState(undefined, { opacity: FOCUS_OPACITY });
+    await api.viewer.setObjectState(sel, { opacity: 1 });
+    state.focusKey = g.key;
+    render();
+    await api.viewer.setCamera(sel, { animationTime: 600 });
+  }
+  async function clearFocus() {
+    if (state.focusKey == null) return;
+    state.focusKey = null;
+    render();
+    await state.api.viewer.setObjectState(undefined, { opacity: 1 });
   }
 
   // ---------- rendering ----------
@@ -196,7 +217,7 @@
   function render() {
     const rows = $("rows");
     if (!state.pours.length) {
-      rows.innerHTML = `<tr><td colspan="4" class="empty">No numbered pours in the loaded models.</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="3" class="empty">No numbered pours in the loaded models.</td></tr>`;
       $("foot").innerHTML = "";
     } else {
       rows.innerHTML = state.pours.map((g, i) => {
@@ -205,14 +226,15 @@
         const emb = g.embeds.length ? `<div class="emb">Embeds ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
         return `<tr>
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span>
-            <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}</td>
+            <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
+            <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
+              class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
+              class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? "Clear focus" : "Zoom and make everything else transparent"}">Focus</button></div></td>
           <td class="num">${L.fmtVolume(g.totals.volume)}</td>
-          <td class="num">${f0(g.totals.rebar)}</td>
-          <td class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button>
-            <button class="small secondary" data-act="zoom" data-i="${i}" title="Select and zoom">Zoom</button></td></tr>`;
+          <td class="num">${f0(g.totals.rebar)}</td></tr>`;
       }).join("");
       const t = state.pours.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
-      $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td><td></td></tr>`;
+      $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
     }
     const unnumbered = state.pours.filter((g) => g.embeds.some((e) => L.isUnnumbered(e.code))).map((g) => g.label);
     $("embWarn").hidden = !unnumbered.length;
@@ -222,9 +244,10 @@
     const loose = state.unnumbered;
     $("looseBox").hidden = !loose.length;
     $("looseRows").innerHTML = loose.map((g, i) => `<tr>
-        <td><span class="name">"${esc(g.label)}"</span><div class="sub">${g.objects.length} obj · ${esc(g.types.map((t) => t.split("/")[0]).join(", ") || "–")}</div></td>
-        <td class="num">${L.fmtVolume(g.totals.volume)} m³</td>
-        <td class="acts"><button class="small secondary" data-act="zoomLoose" data-i="${i}">Zoom</button></td></tr>`).join("");
+        <td><span class="name">"${esc(g.label)}"</span><div class="sub">${g.objects.length} obj · ${esc(g.types.map((t) => t.split("/")[0]).join(", ") || "–")}</div>
+          <div class="acts"><button class="small secondary" data-act="selectLoose" data-i="${i}" title="Select these objects and zoom to them">Select</button></div></td>
+        <td class="num">${L.fmtVolume(g.totals.volume)} m³</td></tr>`).join("");
+    $("btnClearFocus").hidden = state.focusKey == null;
   }
 
   function renderFieldOptions() {
@@ -250,13 +273,16 @@
         if (state.tags.has(g.key)) await removeTags([g.key]);
         else if (!(await addTags([g]))) setStatus(`${g.label}: no geometry to anchor the tag`, true);
         render();
-      } else if (b.dataset.act === "zoom") await zoomTo(state.pours[i]);
-      else if (b.dataset.act === "zoomLoose") await zoomTo(state.unnumbered[i]);
+      } else if (b.dataset.act === "select") await selectPour(state.pours[i]);
+      else if (b.dataset.act === "focus") await focusPour(state.pours[i]);
+      else if (b.dataset.act === "selectLoose") await selectPour(state.unnumbered[i]);
     });
   });
   $("btnShowAll").onclick = () => guarded(showAll);
   $("btnClear").onclick = () => guarded(clearAll);
+  $("btnClearFocus").onclick = () => guarded(clearFocus);
   $("btnReload").onclick = () => guarded(async () => {
+    await clearFocus();
     await removeTags([...state.tags.keys()]);
     await loadPours();
     await applyColours();
@@ -291,6 +317,12 @@
   // Re-read automatically when models are loaded or unloaded (debounced; the event fires in bursts).
   let reloadTimer = null;
   function onEvent(event) {
+    // Connect's own "Reset model" restores opacity and colours: forget our focus/colour state.
+    if (event === "viewer.onModelReset") {
+      state.focusKey = null; state.coloured = false; $("chkColour").checked = false;
+      render();
+      return;
+    }
     if (event === "viewer.onModelStateChanged" && state.api) {
       setStatus("Models changed, reading pours again…");
       clearTimeout(reloadTimer);
