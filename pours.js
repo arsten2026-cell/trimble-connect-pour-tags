@@ -56,20 +56,26 @@
     return out;
   }
 
-  const R = { pos: "Pos/Позиция", size: "Size/Диаметър", qty: "Qty_in_Group/Брой_в_Група", weight: "Group_Weight/Тегло_Група" };
-  /** Rebar groups of one PourUnit (pset Rebar/Армировка) summed per position mark + diameter, sorted by mark. */
+  const R = { pos: "Pos/Позиция", size: "Size/Диаметър", qty: "Qty_in_Group/Брой_в_Група", weight: "Group_Weight/Тегло_Група",
+    spacing: "Spacing/Разстояние" };
+  /**
+   * Rebar of one PourUnit (pset Rebar/Армировка) as the distinct Tekla rebar groups: position, diameter, bars in
+   * the group, group weight. NOT summed: Tekla's IFC export can split one rebar group into several IfcReinforcingBar
+   * objects that each repeat the whole group's Qty and weight (1028: a footing's bars add up to 1,013 kg against
+   * 158 kg in the pour data). The pour's total comes from Rebar_Weight instead. `objects` = IFC objects per group.
+   */
   function summariseRebars(recs) {
     const map = new Map();
     for (const r of recs || []) {
       const pos = String(r[R.pos] == null ? "?" : r[R.pos]).trim() || "?";
       const size = String(r[R.size] == null ? "" : r[R.size]).trim();
-      const k = pos + "|" + size;
-      if (!map.has(k)) map.set(k, { pos, size, qty: 0, weight: 0 });
-      const e = map.get(k);
-      e.qty += num(r[R.qty]) || 1;
-      e.weight += num(r[R.weight]);
+      const qty = num(r[R.qty]) || 1, weight = num(r[R.weight]);
+      const spacing = String(r[R.spacing] == null ? "" : r[R.spacing]).trim();
+      const k = [pos, size, qty, weight.toFixed(3), spacing].join("|");
+      if (!map.has(k)) map.set(k, { pos, size, qty, weight, spacing, objects: 0 });
+      map.get(k).objects += 1;
     }
-    return [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos));
+    return [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos) || b.qty - a.qty);
   }
 
   /** Numbers may arrive as numbers or display strings ("9,9 m³", "1 234.5"). */

@@ -351,20 +351,20 @@
             class="small secondary" data-act="pZoom" data-i="${i}" data-j="${j}">Zoom</button><button
             class="small ${focused ? "on" : "secondary"}" data-act="pFocus" data-i="${i}" data-j="${j}" title="Only this piece opaque">Focus</button><button
             class="small secondary" data-act="pOpen" data-i="${i}" data-j="${j}">Contents ${open ? "▴" : "▾"}</button></div>
-          ${open ? contentsHtml(i, j, state.contents.get(k)) : ""}</li>`;
+          ${open ? contentsHtml(i, j, state.contents.get(k), rb) : ""}</li>`;
     }).join("");
     const pieceFocus = state.focusKey === g.key && state.focusPiece;
     return `<tr class="insp"><td colspan="3">
         <div class="insphead">${pcs.length} pieces of ${esc(g.label)}${pieceFocus ? ` <button class="small secondary" data-act="backToPour" data-i="${i}">Back to pour</button>` : ""}</div>
         <ol class="pieces">${items}</ol></td></tr>`;
   }
-  function contentsHtml(i, j, c) {
+  function contentsHtml(i, j, c, rebarKg) {
     if (!c) return `<div class="contents sub">Loading…</div>`;
     if (c.error) return `<div class="contents sub">Contents not available (${esc(c.error)}).</div>`;
     const reb = c.rebars.length
-      ? `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th><th class="num">kg</th></tr>` +
+      ? `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs/gr</th><th class="num">kg/gr</th></tr>` +
         c.rebars.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
-        `<tr class="tot"><td colspan="2">Rebar</td><td class="num">${f0(c.rebars.reduce((n, r) => n + r.qty, 0))}</td><td class="num">${f1(c.rebars.reduce((n, r) => n + r.weight, 0))}</td></tr></table>`
+        `</table><div class="sub">Rebar groups as Tekla exported them (not summed). Piece total from the pour data: ${f0(rebarKg)} kg.</div>`
       : `<div class="sub">No rebar in this PourUnit.</div>`;
     const oth = c.others.length
       ? `<div class="sub">Also in the PourUnit: ${esc([...c.others.reduce((m, o) => m.set(o.name, (m.get(o.name) || 0) + 1), new Map())].map(([n, k]) => k > 1 ? `${n} ×${k}` : n).join(", "))}</div>`
