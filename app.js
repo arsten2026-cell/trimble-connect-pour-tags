@@ -189,9 +189,10 @@
     await state.api.viewer.setCamera(sel, { animationTime: 600 });
   }
 
-  // Focus: zoom to the pour and ghost everything else. Opacity is 0..1 in Connect (verified live).
-  // Clicking Focus on the focused pour again, or "Clear focus", restores full opacity.
-  const FOCUS_OPACITY = 0.25;
+  // Focus: zoom to the pour; only that pour keeps a colour (its pour colour), everything else grey at 50%.
+  // Opacity is 0..1 in Connect (verified live). Focus again, or "Clear focus", restores colours and opacity.
+  const FOCUS_OPACITY = 0.5;
+  const FOCUS_GREY = "#9E9E9E";
   // Every object in the loaded models as {modelId, id}. Connect ignores opacity with an undefined
   // ("all objects") selector, so focus works on explicit object lists.
   async function everyObject() {
@@ -205,8 +206,8 @@
     const sel = selectorFor(g.objects);
     const mine = new Set(g.objects.map((o) => o.modelId + ":" + o.id));
     const others = (await everyObject()).filter((o) => !mine.has(o.modelId + ":" + o.id));
-    if (others.length) await api.viewer.setObjectState(selectorFor(others), { opacity: FOCUS_OPACITY });
-    await api.viewer.setObjectState(sel, { opacity: 1 });
+    if (others.length) await api.viewer.setObjectState(selectorFor(others), { color: FOCUS_GREY, opacity: FOCUS_OPACITY });
+    await api.viewer.setObjectState(sel, { color: g.colour, opacity: 1 });
     state.focusKey = g.key;
     render();
     await api.viewer.setCamera(sel, { animationTime: 600 });
@@ -216,7 +217,8 @@
     state.focusKey = null;
     render();
     const all = await everyObject();
-    if (all.length) await state.api.viewer.setObjectState(selectorFor(all), { opacity: 1 });
+    if (all.length) await state.api.viewer.setObjectState(selectorFor(all), { color: "reset", opacity: 1 });
+    if (state.coloured) await applyColours();   // put the per-pour colours back
   }
 
   // ---------- rendering ----------
@@ -299,7 +301,7 @@
   });
   $("chkColour").onchange = (e) => guarded(async () => {
     state.coloured = e.target.checked;
-    await applyColours();
+    if (state.focusKey == null) await applyColours();   // during focus, colours come back on Clear focus
     await refreshTags();   // recolour labels that are shown
     render();
   });
