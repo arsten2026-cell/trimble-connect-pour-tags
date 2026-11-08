@@ -366,7 +366,50 @@
     const pieceFocus = state.focusKey === g.key && state.focusPiece;
     return `<tr class="insp"><td colspan="3">
         <div class="insphead">${pcs.length} pieces of ${esc(g.label)}${pieceFocus ? ` <button class="small secondary" data-act="backToPour" data-i="${i}">Back to pour</button>` : ""}</div>
+        ${pourLists(g, i)}
         <ol class="pieces">${items}</ol></td></tr>`;
+  }
+  // Whole-pour rebar and embed lists, shown above the pieces in Inspect.
+  function pourLists(g, i) {
+    const pcs = piecesOf(g);
+    const cs = pcs.map((o) => state.contents.get(objKey(o)));
+    const loaded = cs.filter(Boolean).length;
+    let reb;
+    if (loaded < pcs.length) {
+      reb = `<div class="sub">Reading rebar… ${loaded}/${pcs.length} pieces</div>`;
+    } else {
+      const failed = cs.filter((c) => c.error).length;
+      const list = L.pourRebarList(cs.filter((c) => !c.error).map((c) => c.rebars));
+      const pourKg = g.totals.rebar;
+      if (!list.rows.length) {
+        reb = `<div class="sub">No rebar found in this pour's PourUnits${pourKg > 0 ? ` (pour data: ${f0(pourKg)} kg)` : ""}.</div>`;
+      } else {
+        const mism = L.rebarMismatch(list.weight, pourKg);
+        reb = `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th><th class="num">kg</th></tr>` +
+          list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
+          `<tr class="tot"><td colspan="2">List</td><td class="num">${f0(list.qty)}</td><td class="num">${f1(list.weight)}</td></tr></table>` +
+          (mism
+            ? `<div class="mism">List ${f0(list.weight)} kg vs pour data ${f0(pourKg)} kg — Tekla's export repeats split groups; trust the pour data total.</div>`
+            : `<div class="sub">List ${f0(list.weight)} kg matches the pour data (${f0(pourKg)} kg).</div>`) +
+          `<div class="acts"><button class="small secondary" data-act="selAllRebar" data-i="${i}">Select all rebar</button></div>`;
+      }
+      if (failed) reb += `<div class="sub">${failed} piece(s) could not be read.</div>`;
+    }
+    const withEmb = pcs.filter((o) => String((o.props || {})[L.P.embeds] || "").trim()).length;
+    const emb = g.embeds.length
+      ? `<table class="rebars"><tr><th>Mark</th><th class="num">Qty</th></tr>` +
+        g.embeds.map((e) => `<tr><td>${esc(e.code)}</td><td class="num">${f0(e.count)}</td></tr>`).join("") +
+        `</table><div class="sub">${withEmb} of ${pcs.length} pieces contain embeds.</div>`
+      : `<div class="sub">No embedded parts.</div>`;
+    return `<div class="pourlists"><div class="lh">Rebar · whole pour</div>${reb}<div class="lh">Embeds · whole pour</div>${emb}</div>`;
+  }
+  // Read every piece's PourUnit (cached), a few at a time, re-rendering as they arrive.
+  async function loadAllContents(g) {
+    const pcs = piecesOf(g).filter((o) => !state.contents.has(objKey(o)));
+    for (let k = 0; k < pcs.length; k += 4) {
+      await Promise.all(pcs.slice(k, k + 4).map((o) => loadContents(o)));
+      if (state.inspectKey === g.key) render();
+    }
   }
   function contentsHtml(i, j, c, rebarKg) {
     if (!c) return `<div class="contents sub">Loading…</div>`;
@@ -453,6 +496,7 @@
         const g = state.pours[i];
         state.inspectKey = state.inspectKey === g.key ? null : g.key;
         render();
+        if (state.inspectKey === g.key) await loadAllContents(g);
       } else if (b.dataset.act && b.dataset.act[0] === "p" && b.dataset.j != null) {
         const g = state.pours[i], o = piecesOf(g)[+b.dataset.j];
         const sel = selectorFor([o]);
@@ -470,6 +514,20 @@
             await state.api.viewer.setSelection(rs, "set");
             await state.api.viewer.setCamera(rs, { animationTime: 600 });
           }
+        }
+      } else if (b.dataset.act === "selAllRebar") {
+        const g = state.pours[i];
+        const byModel = new Map();
+        for (const o of piecesOf(g)) {
+          const c = state.contents.get(objKey(o));
+          if (!c || c.error) continue;
+          if (!byModel.has(o.modelId)) byModel.set(o.modelId, []);
+          byModel.get(o.modelId).push(...c.rebarIds);
+        }
+        const sel = { modelObjectIds: [...byModel].filter(([, ids]) => ids.length).map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds })) };
+        if (sel.modelObjectIds.length) {
+          await state.api.viewer.setSelection(sel, "set");
+          await state.api.viewer.setCamera(sel, { animationTime: 600 });
         }
       } else if (b.dataset.act === "backToPour") await backToPour(state.pours[i]);
       else if (b.dataset.act === "select") await selectPour(state.pours[i]);

@@ -79,6 +79,38 @@
     return [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos) || b.qty - a.qty);
   }
 
+  /**
+   * Rebar list for a whole pour from the per-piece group lists (summariseRebars output of each piece).
+   * Within one piece, exact duplicate rows (same Pos, Ø, pcs/gr, kg/gr) are dropped: they are the split-group
+   * copies. Then rows are combined across pieces by Pos + Ø, adding pcs and kg. Sorted naturally by Pos.
+   * @returns {rows: [{pos, size, qty, weight}], qty, weight}
+   */
+  function pourRebarList(pieceLists) {
+    const map = new Map();
+    for (const list of pieceLists || []) {
+      const seen = new Set();
+      for (const r of list || []) {
+        const k = [r.pos, r.size, r.qty, Number(r.weight).toFixed(3)].join("|");
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const key = r.pos + "|" + r.size;
+        if (!map.has(key)) map.set(key, { pos: r.pos, size: r.size, qty: 0, weight: 0 });
+        const e = map.get(key);
+        e.qty += num(r.qty);
+        e.weight += num(r.weight);
+      }
+    }
+    const rows = [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos) || naturalCompare(a.size, b.size));
+    return { rows, qty: rows.reduce((n, r) => n + r.qty, 0), weight: rows.reduce((n, r) => n + r.weight, 0) };
+  }
+
+  /** List total vs pour-data total: differs when more than ~2 % apart (or one side is zero and the other not). */
+  function rebarMismatch(listKg, pourKg) {
+    const a = num(listKg), b = num(pourKg);
+    if (a === 0 && b === 0) return false;
+    return Math.abs(a - b) > 0.02 * Math.max(a, b);
+  }
+
   /** Numbers may arrive as numbers or display strings ("9,9 m³", "1 234.5"). */
   function num(v) {
     if (v == null || v === "") return 0;
@@ -401,7 +433,7 @@
   }
 
   return {
-    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
+    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, pourRebarList, rebarMismatch, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });
