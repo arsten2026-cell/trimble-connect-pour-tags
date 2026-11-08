@@ -347,14 +347,15 @@
     if (withList.length) {
       const list = L.sumRebarLists(withList.map((o) => L.parseRebarList(o.props[L.P.rebarList])));
       const pourKg = g.totals.rebar;
-      const missing = pcs.length - withList.length;
+      // Pours with no rebar get an empty list; only a piece WITH rebar weight but no list is really missing.
+      const missing = pcs.filter((o) => !String((o.props || {})[L.P.rebarList] || "").trim() && L.num((o.props || {})[L.P.rebar]) > 0).length;
       const hasKg = list.rows.some((r) => r.weight > 0);
       reb = `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th>${hasKg ? `<th class="num">kg</th>` : ""}</tr>` +
         list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td>${hasKg ? `<td class="num">${f1(r.weight)}</td>` : ""}</tr>`).join("") +
         `<tr class="tot"><td colspan="2">Total</td><td class="num">${f0(list.qty)}</td>${hasKg ? `<td class="num">${f1(list.weight)}</td>` : ""}</tr></table>` +
         `<div class="sub">Counted in Tekla (Rebar_List in the pour data).</div>` +
         (hasKg && L.rebarMismatch(list.weight, pourKg) ? `<div class="mism">List ${f0(list.weight)} kg vs Rebar_Weight ${f0(pourKg)} kg in the pour data.</div>` : "") +
-        (missing ? `<div class="mism">${missing} of ${pcs.length} pieces have no rebar list: not counted above.</div>` : "") +
+        (missing ? `<div class="mism">${missing} of ${pcs.length} pieces have rebar but no rebar list (older export): not counted above.</div>` : "") +
         (loaded === pcs.length ? `<div class="acts"><button class="small secondary" data-act="selAllRebar" data-i="${i}">Select all rebar</button></div>` : "");
     } else if (loaded < pcs.length) {
       reb = `<div class="sub">Reading rebar… ${loaded}/${pcs.length} pieces</div>`;
@@ -366,7 +367,7 @@
         reb = `<div class="sub">No rebar found in this pour's PourUnits${pourKg > 0 ? ` (pour data: ${f0(pourKg)} kg)` : ""}.</div>`;
       } else {
         const mism = L.rebarMismatch(list.weight, pourKg);
-        reb = `<div class="mism">Bar counts below come from the IFC and are not reliable (1028 TAKT 1: 900 here vs 1,810 in Tekla). Exact counts appear once the export writes Rebar_List.</div>` +
+        reb = `<div class="mism">Bar counts below come from the IFC and are not reliable (1028 TAKT 1: 900 here vs 1,651 in Tekla). Exact counts appear once the export writes Rebar_List.</div>` +
           `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th><th class="num">kg</th></tr>` +
           list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
           `<tr class="tot"><td colspan="2">List</td><td class="num">${f0(list.qty)}</td><td class="num">${f1(list.weight)}</td></tr></table>` +
