@@ -116,7 +116,7 @@
         bucket.set(k, {
           key: k, label: key ? k : label, numbered: !!key, objects: [],
           totals: { volume: 0, rebar: 0, fwSides: 0, fwBottom: 0 },
-          _embeds: [], types: new Set(), materials: new Set(), phases: new Set(), date: "",
+          _embeds: [], types: new Set(), materials: new Set(), phases: new Set(), models: new Set(), date: "",
         });
       }
       const g = bucket.get(k);
@@ -130,11 +130,12 @@
       if (str(pr[P.material])) g.materials.add(str(pr[P.material]));
       if (str(pr[P.phase])) g.phases.add(str(pr[P.phase]));
       if (str(pr[P.date]) > g.date) g.date = str(pr[P.date]);
+      g.models.add(shortModelName(it.modelName || it.modelId));
     }
     const finish = (g) => {
       g.embeds = mergeEmbeds(g._embeds);
       delete g._embeds;
-      g.types = [...g.types]; g.materials = [...g.materials]; g.phases = [...g.phases];
+      g.types = [...g.types]; g.materials = [...g.materials]; g.phases = [...g.phases]; g.models = [...g.models];
       g.anchorObject = pickAnchorObject(g.objects);
       return g;
     };
@@ -143,6 +144,69 @@
       pours: [...groups.values()].map(finish).sort(byKey),
       unnumbered: [...loose.values()].map(finish).sort(byKey),
     };
+  }
+
+  /** Model name for display: file name without the extension. */
+  const shortModelName = (name) => String(name || "").replace(/\.(ifc|trb|ifczip|tekla)$/i, "");
+
+  /**
+   * Pour numbers are project-wide, so pours from several models merge by number. Before grouping, make sure
+   * nothing is counted twice:
+   *  1. Two versions of one file loaded (same file id): only the latest version counts.
+   *  2. The same pour object (same IFC GUID) in two models, e.g. a copy of the file: counted once, from the best model.
+   * "Best" = isLatestVersion first, then the model loaded last (higher `order`).
+   * @param items  [{modelId, id, guid?, ...}]
+   * @param models [{modelId, fileId?, name, versionId?, isLatest?, order?}]
+   * @returns {items, warnings: string[]}
+   */
+  function dedupePourObjects(items, models) {
+    const info = new Map((models || []).map((m, i) => [m.modelId, { order: i, ...m }]));
+    const rank = (modelId) => {
+      const m = info.get(modelId) || {};
+      return (m.isLatest === false ? 0 : 1) * 1e6 + (m.order != null ? m.order : 0);
+    };
+    const nameOf = (modelId) => shortModelName((info.get(modelId) || {}).name || modelId);
+    const warnings = [];
+
+    // 1. same file loaded in several versions
+    const byFile = new Map();
+    for (const m of info.values()) {
+      const key = m.fileId || m.modelId;
+      if (!byFile.has(key)) byFile.set(key, []);
+      byFile.get(key).push(m.modelId);
+    }
+    const dropModels = new Set();
+    for (const ids of byFile.values()) {
+      if (ids.length < 2) continue;
+      const sorted = [...ids].sort((a, b) => rank(b) - rank(a));
+      sorted.slice(1).forEach((id) => dropModels.add(id));
+      warnings.push(`${ids.length} versions of ${nameOf(sorted[0])} are loaded: counting the latest only.`);
+    }
+    let kept = items.filter((it) => !dropModels.has(it.modelId));
+
+    // 2. same pour object (IFC GUID) in several models
+    const best = new Map();
+    for (const it of kept) {
+      if (!it.guid) continue;
+      const cur = best.get(it.guid);
+      if (!cur || rank(it.modelId) > rank(cur.modelId)) best.set(it.guid, it);
+    }
+    const dupPairs = new Map();   // "winner|loser" -> count
+    kept = kept.filter((it) => {
+      if (!it.guid) return true;
+      const win = best.get(it.guid);
+      if (win === it) return true;
+      const k = nameOf(win.modelId) + "|" + nameOf(it.modelId);
+      dupPairs.set(k, (dupPairs.get(k) || 0) + 1);
+      return false;
+    });
+    for (const [k, n] of dupPairs) {
+      const [w, l] = k.split("|");
+      warnings.push(w === l
+        ? `${n} pour objects appear twice in ${w}: counted once.`
+        : `${n} pour objects are in both ${w} and ${l} (same IFC GUID): counted once, from ${w}.`);
+    }
+    return { items: kept, warnings };
   }
 
   /** Largest object of a group: by concrete volume, then by bounding-box volume. */
@@ -288,6 +352,6 @@
 
   return {
     PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
-    naturalCompare, groupPours, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
+    naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });

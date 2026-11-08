@@ -68,12 +68,23 @@
           try { boxes = await api.viewer.getObjectBoundingBoxes(m.modelId, found.map((f) => f.id)); } catch {}
           const byId = new Map((boxes || []).map((b) => [b.id, b.boundingBox]));
           for (const f of found) f.bbox = byId.get(f.id) || null;
+          // IFC GUIDs, to count a pour object once when it is in two loaded models
+          try {
+            const guids = await api.viewer.convertToObjectIds(m.modelId, found.map((f) => f.id));
+            found.forEach((f, k) => { f.guid = (guids && guids[k]) || null; });
+          } catch {}
           items.push(...found);
         }
         setStatus(`Reading pours… ${scanned} objects checked, ${items.length} pour objects found`);
       }
     }
-    const { pours, unnumbered } = L.groupPours(items);
+    // Several models: pour numbers are project-wide, so they merge; never count a pour object twice.
+    const models = await loadedModels(modelObjs);
+    const names = new Map(models.map((m) => [m.modelId, m.name]));
+    for (const it of items) it.modelName = names.get(it.modelId) || it.modelId;
+    const dd = L.dedupePourObjects(items, models);
+    const counted = dd.items;
+    const { pours, unnumbered } = L.groupPours(counted);
     pours.forEach((g, i) => { g.colour = L.colourFor(i); });
     state.pours = pours;
     state.unnumbered = unnumbered;
@@ -85,9 +96,23 @@
       console.warn("[pour-tags] property sets seen", Object.fromEntries(psetNames));
     } else {
       const loose = unnumbered.reduce((n, g) => n + g.objects.length, 0);
-      setStatus(`${pours.length} pours, ${items.length} pour objects` + (loose ? ` · ${loose} without a pour number` : ""));
+      const nModels = new Set(counted.map((it) => it.modelId)).size;
+      setStatus(`${pours.length} pours, ${counted.length} pour objects` + (nModels > 1 ? ` from ${nModels} models` : "") +
+        (loose ? ` · ${loose} without a pour number` : "") + (dd.warnings.length ? " · ⚠ " + dd.warnings.join(" ") : ""), dd.warnings.length > 0);
     }
     for (const b of ["btnShowAll", "btnClear", "btnReload"]) $(b).disabled = false;
+  }
+
+  // Loaded models with file id / version, in load order, for the de-duplication rules.
+  async function loadedModels(modelObjs) {
+    let specs = [];
+    try { specs = (await state.api.viewer.getModels("loaded")) || []; } catch {}
+    const byId = new Map(specs.map((m) => [m.id, m]));
+    return (modelObjs || []).map((mo, order) => {
+      const m = byId.get(mo.modelId) || specs.find((x) => x.versionId === mo.modelId) || {};
+      return { modelId: mo.modelId, fileId: m.id || mo.modelId, name: m.name || mo.modelId,
+        versionId: m.versionId, isLatest: m.isLatestVersion, order };
+    });
   }
 
   // ---------- selectors ----------
@@ -251,6 +276,7 @@
         return `<tr>
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span>
             <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
+            ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
             <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
               class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
               class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? "Clear focus" : "Zoom and make everything else transparent"}">Focus</button></div></td>
