@@ -161,38 +161,52 @@
     return { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2, z: b.max.z };
   }
 
+  // Label fields in label order. Defaults follow the site format:
+  // TAKT 1 / бетон - 37.9 м³ / арм. 500кг / кофр. страни - 200 м² / кофр. долу - 20 м² / клас - C25/30 / закл. ч. - EB01
   const FIELDS = [
-    { id: "number", label: "Pour number", def: true },
-    { id: "volume", label: "Concrete volume (m³)", def: true },
-    { id: "embeds", label: "Embedded parts", def: true },
-    { id: "rebar", label: "Rebar weight (kg)", def: false },
-    { id: "formwork", label: "Formwork area (m²)", def: false },
-    { id: "type", label: "Pour type", def: false },
-    { id: "material", label: "Concrete grade", def: false },
+    { id: "number", label: "Pour number · Такт", def: true },
+    { id: "volume", label: "Concrete volume · бетон (m³)", def: true },
+    { id: "rebar", label: "Rebar · арм. (kg)", def: true },
+    { id: "fwSides", label: "Formwork sides · кофр. страни (m²)", def: true },
+    { id: "fwBottom", label: "Formwork bottom · кофр. долу (m²)", def: true },
+    { id: "material", label: "Concrete grade · клас", def: true },
+    { id: "type", label: "Pour type · тип", def: false },
+    { id: "embeds", label: "Embedded parts · закл. части", def: true },
   ];
 
-  const fmt = (v, d) => {
-    const r = Number(v.toFixed(d));
-    return String(r);
-  };
+  const fmt = (v, d) => String(Number(v.toFixed(d)));
   /** Volume to 1 decimal, but keep 2 for small pours so 0.04 m³ doesn't print as 0. */
   const fmtVolume = (v) => (v > 0 && v < 1 ? fmt(v, 2) : fmt(v, 1));
+  // Pour type is written "English/Български": pick the half for the label language.
+  const typeName = (t, lang) => { const [en, bg] = t.split("/"); return ((lang === "bg" ? bg : en) || en || t).trim(); };
 
-  /** Label text such as "TAKT 5, 9.9 m³, Embeds EB01". */
-  function labelText(g, fields) {
+  /** Label pieces for the chosen fields, in FIELDS order. Empty quantities are left out. */
+  function labelParts(g, fields, lang) {
     const on = new Set(fields || FIELDS.filter((f) => f.def).map((f) => f.id));
-    const parts = [];
-    if (on.has("number")) parts.push(g.label);
-    if (on.has("type") && g.types.length) parts.push(g.types.map((t) => t.split("/")[0]).join("+"));
-    if (on.has("material") && g.materials.length) parts.push(g.materials.join("+"));
-    if (on.has("volume")) parts.push(`${fmtVolume(g.totals.volume)} m³`);
-    if (on.has("rebar") && g.totals.rebar > 0) parts.push(`${fmt(g.totals.rebar, 0)} kg`);
-    if (on.has("formwork")) {
-      const fw = g.totals.fwSides + g.totals.fwBottom;
-      if (fw > 0) parts.push(`FW ${fmt(fw, 1)} m²`);
+    const bg = lang === "bg";
+    const t = g.totals;
+    const out = [];
+    for (const f of FIELDS) {
+      if (!on.has(f.id)) continue;
+      switch (f.id) {
+        case "number": out.push(g.label); break;
+        case "volume": out.push(bg ? `бетон - ${fmtVolume(t.volume)} м³` : `${fmtVolume(t.volume)} m³`); break;
+        case "rebar": if (t.rebar > 0) out.push(bg ? `арм. ${fmt(t.rebar, 0)}кг` : `rebar ${fmt(t.rebar, 0)} kg`); break;
+        case "fwSides": if (t.fwSides > 0) out.push(bg ? `кофр. страни - ${fmt(t.fwSides, 1)} м²` : `FW sides ${fmt(t.fwSides, 1)} m²`); break;
+        case "fwBottom": if (t.fwBottom > 0) out.push(bg ? `кофр. долу - ${fmt(t.fwBottom, 1)} м²` : `FW bottom ${fmt(t.fwBottom, 1)} m²`); break;
+        case "material": if (g.materials.length) out.push(bg ? `клас - ${g.materials.join(", ")}` : g.materials.join("+")); break;
+        case "type": if (g.types.length) out.push((bg ? "тип - " : "") + [...new Set(g.types.map((x) => typeName(x, lang)))].join(", ")); break;
+        case "embeds": if (g.embeds.length) out.push(bg ? `закл. ч. - ${formatEmbeds(g.embeds)}` : `Embeds ${formatEmbeds(g.embeds)}`); break;
+      }
     }
-    if (on.has("embeds") && g.embeds.length) parts.push(`Embeds ${formatEmbeds(g.embeds)}`);
-    return parts.join(", ");
+    return out;
+  }
+
+  /** Label text. layout "lines" = one field per line (default), "single" = comma-separated. */
+  function labelText(g, fields, opts) {
+    const o = opts || {};
+    const parts = labelParts(g, fields, o.lang || "bg");
+    return parts.join((o.layout || "lines") === "single" ? ", " : "\n");
   }
 
   /** Distinct, readable colours for pour numbers (cycled). */
@@ -208,6 +222,6 @@
 
   return {
     PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
-    naturalCompare, groupPours, pickAnchorObject, topCentre, labelText, fmtVolume, colourFor, hexToRgba,
+    naturalCompare, groupPours, pickAnchorObject, topCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });

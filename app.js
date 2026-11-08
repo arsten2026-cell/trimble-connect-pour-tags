@@ -20,11 +20,17 @@
   };
 
   // ---------- settings (per viewer, kept in localStorage) ----------
-  const SETTINGS_KEY = "arsten.pourTags.v1";
+  const SETTINGS_KEY = "arsten.pourTags.v2";   // v2: split formwork, language, layout
   const settings = (() => {
     let s = {};
     try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch {}
-    return { fields: s.fields || L.FIELDS.filter((f) => f.def).map((f) => f.id), lift: s.lift || 3 };
+    const known = new Set(L.FIELDS.map((f) => f.id));
+    return {
+      fields: (s.fields || L.FIELDS.filter((f) => f.def).map((f) => f.id)).filter((id) => known.has(id)),
+      lift: s.lift || 3,
+      lang: s.lang === "en" ? "en" : "bg",
+      layout: s.layout === "single" ? "single" : "lines",
+    };
   })();
   const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {} };
 
@@ -103,7 +109,7 @@
     // Stagger heights a little so labels of neighbouring pours overlap less.
     const lift = settings.lift * 1000 * (1 + 0.3 * (index % 3));
     return {
-      text: L.labelText(g, settings.fields),
+      text: L.labelText(g, settings.fields, settings),
       color: TAG_COLOUR,
       start: { positionX: p.x, positionY: p.y, positionZ: p.z, modelId: o.modelId, objectId: o.id },
       end: { positionX: p.x, positionY: p.y, positionZ: p.z + lift },
@@ -220,6 +226,8 @@
     $("fields").innerHTML = L.FIELDS.map((f) =>
       `<label class="chk"><input type="checkbox" data-field="${f.id}" ${settings.fields.includes(f.id) ? "checked" : ""}> ${esc(f.label)}</label>`).join("");
     $("numLift").value = settings.lift;
+    $("selLang").value = settings.lang;
+    $("selLayout").value = settings.layout;
   }
 
   // ---------- wiring ----------
@@ -257,6 +265,8 @@
     saveSettings();
     guarded(refreshTags);
   };
+  $("selLang").onchange = (e) => { settings.lang = e.target.value; saveSettings(); guarded(refreshTags); };
+  $("selLayout").onchange = (e) => { settings.layout = e.target.value; saveSettings(); guarded(refreshTags); };
   $("numLift").onchange = (e) => {
     const v = parseFloat(e.target.value);
     if (v > 0) { settings.lift = v; saveSettings(); guarded(refreshTags); }

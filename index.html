@@ -19,6 +19,7 @@
   button.on { background:var(--tag); border-color:var(--tag); color:#fff; }
   button:disabled { opacity:.45; cursor:default; }
   label.chk { display:inline-flex; align-items:center; gap:4px; margin:2px 10px 2px 0; font-size:12px; white-space:nowrap; }
+  select { font:inherit; font-size:12px; padding:1px 2px; border:1px solid var(--line); border-radius:0; background:#fff; }
   input[type=number] { width:56px; font:inherit; padding:2px 4px; border:1px solid var(--line); border-radius:0; }
   details { border-top:1px solid var(--line); padding-top:6px; margin-top:8px; }
   summary { cursor:pointer; font-size:12px; color:var(--muted); }
@@ -53,6 +54,10 @@
 <details id="optLabel">
   <summary>Label fields</summary>
   <div id="fields" style="margin-top:6px"></div>
+  <div style="margin-top:6px">
+    <label class="chk">Language <select id="selLang"><option value="bg">Български</option><option value="en">English</option></select></label>
+    <label class="chk">Layout <select id="selLayout"><option value="lines">One field per line</option><option value="single">One line</option></select></label>
+  </div>
   <div style="margin-top:6px"><label class="chk">Leader height <input type="number" id="numLift" min="0.5" max="50" step="0.5" value="3"> m</label></div>
 </details>
 
@@ -73,7 +78,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/trimble-connect-workspace-api@0.3.38/dist/iife/trimbleconnect.workspace.api.js" integrity="sha384-lFiNt/56q6HnUNbuy0WHO3NP6BkQjY4EH8+5eELYVfnhkB42snRTmSa3UOAlX9gg" crossorigin="anonymous"></script>
-<script src="pours.js?v=2"></script>
-<script src="app.js?v=3"></script>
+<script src="pours.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
