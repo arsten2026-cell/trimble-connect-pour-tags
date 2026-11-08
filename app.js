@@ -330,13 +330,6 @@
     }
     return g._pieces;
   }
-  // Row detail: the Tekla parts of the pour (optional Parts/Елементи), first few, full list on hover.
-  function partsLine(parts) {
-    const all = L.formatEmbeds(parts);
-    const shown = parts.slice(0, 3);
-    const more = parts.length - shown.length;
-    return `<div class="sub" title="${esc(all)}">Parts: ${esc(L.formatEmbeds(shown))}${more > 0 ? ` +${more} more` : ""}</div>`;
-  }
   // Inspect: only the whole-pour rebar and embed lists (no per-piece list).
   function inspectRow(g, i) {
     return `<tr class="insp"><td colspan="3">
@@ -407,7 +400,6 @@
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span><button
               class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="List the pieces this pour is made of">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
             <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
-            ${g.parts.length ? partsLine(g.parts) : ""}
             ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
             <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
               class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
