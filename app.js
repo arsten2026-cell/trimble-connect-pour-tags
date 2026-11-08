@@ -28,6 +28,7 @@
     return {
       fields: (s.fields || L.FIELDS.filter((f) => f.def).map((f) => f.id)).filter((id) => known.has(id)),
       lift: s.lift || 3,
+      side: s.side != null ? s.side : 3,
       lang: s.lang === "en" ? "en" : "bg",
       layout: s.layout === "single" ? "single" : "lines",
     };
@@ -101,18 +102,21 @@
   const allPourObjects = () => state.pours.concat(state.unnumbered).flatMap((g) => g.objects);
 
   // ---------- tags (text markups with a leader) ----------
+  // Arrow tip on the pour object nearest the pour's centre; text raised by the leader height and pushed
+  // sideways away from the middle of the site so it clears the building.
   function markupFor(g, index) {
-    const o = g.anchorObject;
-    if (!o || !o.bbox) return null;
-    const top = L.topCentre(o.bbox);
-    const p = { x: top.x * BBOX_TO_MM, y: top.y * BBOX_TO_MM, z: top.z * BBOX_TO_MM };
+    const pl = L.tagPlacement(g, L.siteCentre(state.pours));
+    if (!pl) return null;
+    const k = BBOX_TO_MM;
+    const p = { x: pl.tip.x * k, y: pl.tip.y * k, z: pl.tip.z * k };
     // Stagger heights a little so labels of neighbouring pours overlap less.
     const lift = settings.lift * 1000 * (1 + 0.3 * (index % 3));
+    const side = settings.side * 1000;
     return {
       text: L.labelText(g, settings.fields, settings),
       color: TAG_COLOUR,
-      start: { positionX: p.x, positionY: p.y, positionZ: p.z, modelId: o.modelId, objectId: o.id },
-      end: { positionX: p.x, positionY: p.y, positionZ: p.z + lift },
+      start: { positionX: p.x, positionY: p.y, positionZ: p.z, modelId: pl.object.modelId, objectId: pl.object.id },
+      end: { positionX: p.x + pl.away.x * side, positionY: p.y + pl.away.y * side, positionZ: p.z + lift },
     };
   }
 
@@ -226,6 +230,7 @@
     $("fields").innerHTML = L.FIELDS.map((f) =>
       `<label class="chk"><input type="checkbox" data-field="${f.id}" ${settings.fields.includes(f.id) ? "checked" : ""}> ${esc(f.label)}</label>`).join("");
     $("numLift").value = settings.lift;
+    $("numSide").value = settings.side;
     $("selLang").value = settings.lang;
     $("selLayout").value = settings.layout;
   }
@@ -267,6 +272,10 @@
   };
   $("selLang").onchange = (e) => { settings.lang = e.target.value; saveSettings(); guarded(refreshTags); };
   $("selLayout").onchange = (e) => { settings.layout = e.target.value; saveSettings(); guarded(refreshTags); };
+  $("numSide").onchange = (e) => {
+    const v = parseFloat(e.target.value);
+    if (v >= 0) { settings.side = v; saveSettings(); guarded(refreshTags); }
+  };
   $("numLift").onchange = (e) => {
     const v = parseFloat(e.target.value);
     if (v > 0) { settings.lift = v; saveSettings(); guarded(refreshTags); }

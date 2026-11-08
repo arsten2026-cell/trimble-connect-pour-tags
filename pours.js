@@ -161,6 +161,69 @@
     return { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2, z: b.max.z };
   }
 
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  /** Plan (XY) distance from a point to a bounding box; 0 when the point is over the box. */
+  function planDistance(p, b) {
+    const dx = p.x - clamp(p.x, b.min.x, b.max.x);
+    const dy = p.y - clamp(p.y, b.min.y, b.max.y);
+    return Math.hypot(dx, dy);
+  }
+
+  /** Centre of a pour in plan: centres of its objects' boxes, weighted by concrete volume
+   *  (bounding-box volume when a pour has no volumes). Null when no object has a box. */
+  function pourCentre(objects) {
+    const withBox = objects.filter((o) => o.bbox);
+    if (!withBox.length) return null;
+    const w = (o) => num((o.props || {})[P.volume]);
+    const useVol = withBox.some((o) => w(o) > 0);
+    let sx = 0, sy = 0, sw = 0;
+    for (const o of withBox) {
+      const c = topCentre(o.bbox);
+      const wt = useVol ? w(o) : (bboxVolume(o.bbox) || 1);
+      sx += c.x * wt; sy += c.y * wt; sw += wt;
+    }
+    return { x: sx / sw, y: sy / sw };
+  }
+
+  /**
+   * Where a pour's tag goes.
+   * The arrow tip sits on concrete: on the top face of the pour object nearest to the pour's centre
+   * (the point of that face closest to the centre, so it stays on the object).
+   * `away` is the plan direction from `siteCentre` to the pour, for pushing the label out sideways.
+   * Units are those of the bounding boxes.
+   */
+  function tagPlacement(g, siteCentre) {
+    const centre = pourCentre(g.objects);
+    if (!centre) return null;
+    let best = null, bestD = Infinity, bestV = -1;
+    for (const o of g.objects) {
+      if (!o.bbox) continue;
+      const d = planDistance(centre, o.bbox);
+      const v = num((o.props || {})[P.volume]) || bboxVolume(o.bbox);
+      // nearest object; among objects under the centre, the biggest one
+      if (d < bestD - 1e-9 || (Math.abs(d - bestD) <= 1e-9 && v > bestV)) { best = o; bestD = d; bestV = v; }
+    }
+    const b = best.bbox;
+    const tip = { x: clamp(centre.x, b.min.x, b.max.x), y: clamp(centre.y, b.min.y, b.max.y), z: b.max.z };
+    let away = { x: 1, y: 0 };
+    if (siteCentre) {
+      const dx = centre.x - siteCentre.x, dy = centre.y - siteCentre.y, L = Math.hypot(dx, dy);
+      if (L > 1e-6) away = { x: dx / L, y: dy / L };
+    }
+    return { object: best, tip, centre, away };
+  }
+
+  /** Centre (plan) of all pours together: the building, for "away from the building" offsets. */
+  function siteCentre(groups) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const g of groups) for (const o of g.objects) {
+      if (!o.bbox) continue;
+      minX = Math.min(minX, o.bbox.min.x); minY = Math.min(minY, o.bbox.min.y);
+      maxX = Math.max(maxX, o.bbox.max.x); maxY = Math.max(maxY, o.bbox.max.y);
+    }
+    return isFinite(minX) ? { x: (minX + maxX) / 2, y: (minY + maxY) / 2 } : null;
+  }
+
   // Label fields in label order. Defaults follow the site format:
   // TAKT 1 / бетон - 37.9 м³ / арм. 500кг / кофр. страни - 200 м² / кофр. долу - 20 м² / клас - C25/30 / закл. ч. - EB01
   const FIELDS = [
@@ -222,6 +285,6 @@
 
   return {
     PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
-    naturalCompare, groupPours, pickAnchorObject, topCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
+    naturalCompare, groupPours, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });
