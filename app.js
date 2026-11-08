@@ -192,11 +192,20 @@
   // Focus: zoom to the pour and ghost everything else. Opacity is 0..1 in Connect (verified live).
   // Clicking Focus on the focused pour again, or "Clear focus", restores full opacity.
   const FOCUS_OPACITY = 0.25;
+  // Every object in the loaded models as {modelId, id}. Connect ignores opacity with an undefined
+  // ("all objects") selector, so focus works on explicit object lists.
+  async function everyObject() {
+    const out = [];
+    for (const m of (await state.api.viewer.getObjects()) || []) for (const o of m.objects || []) out.push({ modelId: m.modelId, id: o.id });
+    return out;
+  }
   async function focusPour(g) {
     const api = state.api;
     if (state.focusKey === g.key) return clearFocus();
     const sel = selectorFor(g.objects);
-    await api.viewer.setObjectState(undefined, { opacity: FOCUS_OPACITY });
+    const mine = new Set(g.objects.map((o) => o.modelId + ":" + o.id));
+    const others = (await everyObject()).filter((o) => !mine.has(o.modelId + ":" + o.id));
+    if (others.length) await api.viewer.setObjectState(selectorFor(others), { opacity: FOCUS_OPACITY });
     await api.viewer.setObjectState(sel, { opacity: 1 });
     state.focusKey = g.key;
     render();
@@ -206,7 +215,8 @@
     if (state.focusKey == null) return;
     state.focusKey = null;
     render();
-    await state.api.viewer.setObjectState(undefined, { opacity: 1 });
+    const all = await everyObject();
+    if (all.length) await state.api.viewer.setObjectState(selectorFor(all), { opacity: 1 });
   }
 
   // ---------- rendering ----------
