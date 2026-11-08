@@ -16,10 +16,8 @@
     unnumbered: [],    // groups whose number has no digit
     tags: new Map(),   // pour key -> markup id
     coloured: false,
-    focusKey: null, focusPiece: null, focusTagAdded: false,
+    focusKey: null, focusTagAdded: false,
     inspectKey: null,        // pour whose pieces are listed
-    openPieces: new Set(),   // pieces whose contents are expanded
-    contents: new Map(),     // piece key -> PourUnit contents
     isolated: false,
   };
 
@@ -49,7 +47,6 @@
   async function loadPours() {
     const api = state.api;
     setStatus("Reading pours from the loaded models…");
-    state.contents.clear(); state.openPieces.clear();   // runtime ids change when models reload
     let modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
     const proxyCount = (modelObjs || []).reduce((n, m) => n + (m.objects || []).length, 0);
     if (!proxyCount) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
@@ -249,23 +246,8 @@
     await addTags([g]);   // (re)draws it in the pour colour
   }
   async function focusPour(g) {
-    if (state.focusKey === g.key && !state.focusPiece) return clearFocus();
+    if (state.focusKey === g.key) return clearFocus();
     await focusTagFor(g);
-    state.focusPiece = null;
-    render();
-    await applyFocus(g.objects, g.colour);
-  }
-  // Inspect list: focus one piece of a pour (only that piece opaque). Again on the same piece = back to the pour.
-  async function focusPiece(g, o) {
-    if (state.focusPiece === objKey(o)) return backToPour(g);
-    await focusTagFor(g);
-    state.focusPiece = objKey(o);
-    render();
-    await applyFocus([o], g.colour);
-  }
-  async function backToPour(g) {
-    await focusTagFor(g);
-    state.focusPiece = null;
     render();
     await applyFocus(g.objects, g.colour);
   }
@@ -280,44 +262,10 @@
     if (state.focusKey == null) return;
     await dropFocusTag();
     state.focusKey = null;
-    state.focusPiece = null;
     render();
     const all = await everyObject();
     if (all.length) await state.api.viewer.setObjectState(selectorFor(all), { color: "reset", opacity: 1 });
     if (state.coloured) await applyColours();   // put the per-pour colours back
-  }
-
-  // ---------- inspect: the pieces of a pour and what each PourUnit holds ----------
-  // Tekla exports each pour piece as an IfcBuildingElementProxy "PourObject" under an IfcElementAssembly
-  // "PourUnit" that also holds its rebars (pset Rebar/Армировка) and embed / steel assemblies.
-  const HIERARCHY_ASSEMBLY = 4;   // HierarchyType.ElementAssembly
-  async function loadContents(o) {
-    const k = objKey(o);
-    if (state.contents.has(k)) return state.contents.get(k);
-    const api = state.api;
-    let result;
-    try {
-      const parents = (await api.viewer.getHierarchyParents(o.modelId, [o.id], HIERARCHY_ASSEMBLY)) || [];
-      const unit = parents[0];
-      if (!unit) throw new Error("no PourUnit parent");
-      const kids = ((await api.viewer.getHierarchyChildren(o.modelId, [unit.id], HIERARCHY_ASSEMBLY)) || [])
-        .filter((c) => c.id !== o.id);
-      const props = kids.length ? (await api.viewer.getObjectProperties(o.modelId, kids.map((c) => c.id))) || [] : [];
-      const byId = new Map(props.map((p) => [p.id, p]));
-      const rebarRecs = [], others = [];
-      for (const c of kids) {
-        const p = byId.get(c.id);
-        const rebar = p && L.readPset(p, "Rebar/Армировка");
-        if (rebar) rebarRecs.push(rebar);
-        else others.push({ id: c.id, name: (p && p.product && p.product.name) || c.name || "?", cls: p && p.class });
-      }
-      result = { unitId: unit.id, rebars: L.summariseRebars(rebarRecs), rebarIds: kids.filter((c) => byId.get(c.id) && L.readPset(byId.get(c.id), "Rebar/Армировка")).map((c) => c.id),
-        others, all: kids.map((c) => c.id) };
-    } catch (e) {
-      result = { error: errText(e) };
-    }
-    state.contents.set(k, result);
-    return result;
   }
 
   // ---------- rendering ----------
@@ -330,73 +278,19 @@
     }
     return g._pieces;
   }
-  // Inspect: only the whole-pour rebar and embed lists (no per-piece list).
-  function inspectRow(g, i) {
-    return `<tr class="insp"><td colspan="3">
-        <div class="insphead">${esc(g.label)} · ${piecesOf(g).length} pieces</div>
-        ${pourLists(g, i)}</td></tr>`;
-  }
-  // Whole-pour rebar and embed lists (Inspect).
-  function pourLists(g, i) {
+  // Inspect: the whole-pour embed list only (rebar per pour is not reliable yet; the piece list was removed earlier).
+  function inspectRow(g) {
     const pcs = piecesOf(g);
-    const cs = pcs.map((o) => state.contents.get(objKey(o)));
-    const loaded = cs.filter(Boolean).length;
-    let reb;
-    // Preferred: Rebar_List/Армировка_Списък, counted in Tekla by the export macro (exact counts).
-    const withList = pcs.filter((o) => String((o.props || {})[L.P.rebarList] || "").trim());
-    if (withList.length) {
-      const list = L.sumRebarLists(withList.map((o) => L.parseRebarList(o.props[L.P.rebarList])));
-      const pourKg = g.totals.rebar;
-      // Pours with no rebar get an empty list; only a piece WITH rebar weight but no list is really missing.
-      const missing = pcs.filter((o) => !String((o.props || {})[L.P.rebarList] || "").trim() && L.num((o.props || {})[L.P.rebar]) > 0).length;
-      const hasKg = list.rows.some((r) => r.weight > 0);
-      reb = `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th>${hasKg ? `<th class="num">kg</th>` : ""}</tr>` +
-        list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td>${hasKg ? `<td class="num">${f1(r.weight)}</td>` : ""}</tr>`).join("") +
-        `<tr class="tot"><td colspan="2">Total</td><td class="num">${f0(list.qty)}</td>${hasKg ? `<td class="num">${f1(list.weight)}</td>` : ""}</tr></table>` +
-        `<div class="sub">Counted in Tekla (Rebar_List in the pour data).</div>` +
-        (hasKg && L.rebarMismatch(list.weight, pourKg) ? `<div class="mism">List ${f0(list.weight)} kg vs Rebar_Weight ${f0(pourKg)} kg in the pour data.</div>` : "") +
-        (missing ? `<div class="mism">${missing} of ${pcs.length} pieces have rebar but no rebar list (older export): not counted above.</div>` : "") +
-        (loaded === pcs.length ? `<div class="acts"><button class="small secondary" data-act="selAllRebar" data-i="${i}">Select all rebar</button></div>` : "");
-    } else if (loaded < pcs.length) {
-      reb = `<div class="sub">Reading rebar… ${loaded}/${pcs.length} pieces</div>`;
-    } else {
-      const failed = cs.filter((c) => c.error).length;
-      const list = L.pourRebarList(cs.filter((c) => !c.error).map((c) => c.rebars));
-      const pourKg = g.totals.rebar;
-      if (!list.rows.length) {
-        reb = `<div class="sub">No rebar found in this pour's PourUnits${pourKg > 0 ? ` (pour data: ${f0(pourKg)} kg)` : ""}.</div>`;
-      } else {
-        const mism = L.rebarMismatch(list.weight, pourKg);
-        reb = `<div class="mism">Bar counts below come from the IFC and are not reliable (1028 TAKT 1: 900 here vs 1,651 in Tekla). Exact counts appear once the export writes Rebar_List.</div>` +
-          `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th><th class="num">kg</th></tr>` +
-          list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
-          `<tr class="tot"><td colspan="2">List</td><td class="num">${f0(list.qty)}</td><td class="num">${f1(list.weight)}</td></tr></table>` +
-          (mism
-            ? `<div class="mism">List ${f0(list.weight)} kg vs pour data ${f0(pourKg)} kg — ${list.weight > pourKg
-                ? "Tekla's export repeats split groups"
-                : "Tekla's export writes identical groups as identical rows, which the list counts once"}; trust the pour data total.</div>`
-            : `<div class="sub">List ${f0(list.weight)} kg matches the pour data (${f0(pourKg)} kg).</div>`) +
-          `<div class="acts"><button class="small secondary" data-act="selAllRebar" data-i="${i}">Select all rebar</button></div>`;
-      }
-      if (failed) reb += `<div class="sub">${failed} piece(s) could not be read.</div>`;
-    }
     const withEmb = pcs.filter((o) => String((o.props || {})[L.P.embeds] || "").trim()).length;
     const emb = g.embeds.length
       ? `<table class="rebars"><tr><th>Mark</th><th class="num">Qty</th></tr>` +
         g.embeds.map((e) => `<tr><td>${esc(e.code)}</td><td class="num">${f0(e.count)}</td></tr>`).join("") +
         `</table><div class="sub">${withEmb} of ${pcs.length} pieces contain embeds.</div>`
       : `<div class="sub">No embedded parts.</div>`;
-    return `<div class="pourlists"><div class="lh">Rebar · whole pour</div>${reb}<div class="lh">Embeds · whole pour</div>${emb}</div>`;
+    return `<tr class="insp"><td colspan="3">
+        <div class="insphead">${esc(g.label)} · ${pcs.length} pieces</div>
+        <div class="pourlists"><div class="lh">Embeds · whole pour</div>${emb}</div></td></tr>`;
   }
-  // Read every piece's PourUnit (cached), a few at a time, re-rendering as they arrive.
-  async function loadAllContents(g) {
-    const pcs = piecesOf(g).filter((o) => !state.contents.has(objKey(o)));
-    for (let k = 0; k < pcs.length; k += 4) {
-      await Promise.all(pcs.slice(k, k + 4).map((o) => loadContents(o)));
-      if (state.inspectKey === g.key) render();
-    }
-  }
-
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const f1 = (v) => (Math.round(v * 10) / 10).toLocaleString("en-US");
@@ -414,14 +308,14 @@
         const emb = g.embeds.length ? `<div class="emb">Embeds ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
         return `<tr>
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span><button
-              class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="List the pieces this pour is made of">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
+              class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="Embedded parts of this pour">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
             <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
             ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
             <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
               class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
               class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? "Clear focus" : "Zoom and make everything else transparent"}">Focus</button></div></td>
           <td class="num">${L.fmtVolume(g.totals.volume)}</td>
-          <td class="num">${f0(g.totals.rebar)}</td></tr>` + (state.inspectKey === g.key ? inspectRow(g, i) : "");
+          <td class="num">${f0(g.totals.rebar)}</td></tr>` + (state.inspectKey === g.key ? inspectRow(g) : "");
       }).join("");
       const t = state.pours.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
       $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
@@ -467,41 +361,7 @@
         const g = state.pours[i];
         state.inspectKey = state.inspectKey === g.key ? null : g.key;
         render();
-        if (state.inspectKey === g.key) await loadAllContents(g);
-      } else if (b.dataset.act && b.dataset.act[0] === "p" && b.dataset.j != null) {
-        const g = state.pours[i], o = piecesOf(g)[+b.dataset.j];
-        const sel = selectorFor([o]);
-        if (b.dataset.act === "pSelect") { await state.api.viewer.setSelection(sel, "set"); await state.api.viewer.setCamera(sel, { animationTime: 600 }); }
-        else if (b.dataset.act === "pZoom") await state.api.viewer.setCamera(sel, { animationTime: 600 });
-        else if (b.dataset.act === "pFocus") await focusPiece(g, o);
-        else if (b.dataset.act === "pOpen") {
-          const k = objKey(o);
-          if (state.openPieces.has(k)) { state.openPieces.delete(k); render(); }
-          else { state.openPieces.add(k); render(); await loadContents(o); render(); }
-        } else if (b.dataset.act === "pSelRebar") {
-          const c = state.contents.get(objKey(o));
-          if (c && c.rebarIds.length) {
-            const rs = { modelObjectIds: [{ modelId: o.modelId, objectRuntimeIds: c.rebarIds }] };
-            await state.api.viewer.setSelection(rs, "set");
-            await state.api.viewer.setCamera(rs, { animationTime: 600 });
-          }
-        }
-      } else if (b.dataset.act === "selAllRebar") {
-        const g = state.pours[i];
-        const byModel = new Map();
-        for (const o of piecesOf(g)) {
-          const c = state.contents.get(objKey(o));
-          if (!c || c.error) continue;
-          if (!byModel.has(o.modelId)) byModel.set(o.modelId, []);
-          byModel.get(o.modelId).push(...c.rebarIds);
-        }
-        const sel = { modelObjectIds: [...byModel].filter(([, ids]) => ids.length).map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds })) };
-        if (sel.modelObjectIds.length) {
-          await state.api.viewer.setSelection(sel, "set");
-          await state.api.viewer.setCamera(sel, { animationTime: 600 });
-        }
-      } else if (b.dataset.act === "backToPour") await backToPour(state.pours[i]);
-      else if (b.dataset.act === "select") await selectPour(state.pours[i]);
+      } else if (b.dataset.act === "select") await selectPour(state.pours[i]);
       else if (b.dataset.act === "focus") await focusPour(state.pours[i]);
       else if (b.dataset.act === "selectLoose") await selectPour(state.unnumbered[i]);
     });
