@@ -115,7 +115,7 @@
     return {
       text: L.labelText(g, settings.fields, settings),
       // Same colour as the pour when colouring is on, otherwise the standard tag red.
-      color: state.coloured && g.colour ? L.hexToRgba(g.colour) : TAG_COLOUR,
+      color: (state.coloured || state.focusKey === g.key) && g.colour ? L.hexToRgba(g.colour) : TAG_COLOUR,
       start: { positionX: p.x, positionY: p.y, positionZ: p.z, modelId: pl.object.modelId, objectId: pl.object.id },
       end: { positionX: p.x + pl.away.x * side, positionY: p.y + pl.away.y * side, positionZ: p.z + lift },
     };
@@ -208,12 +208,24 @@
     const others = (await everyObject()).filter((o) => !mine.has(o.modelId + ":" + o.id));
     if (others.length) await api.viewer.setObjectState(selectorFor(others), { color: FOCUS_GREY, opacity: FOCUS_OPACITY });
     await api.viewer.setObjectState(sel, { color: g.colour, opacity: 1 });
+    await dropFocusTag();   // the tag Focus added for the previous pour
     state.focusKey = g.key;
+    // Focus also tags the pour; remember if we added it, so moving/clearing focus removes only that tag.
+    state.focusTagAdded = !state.tags.has(g.key);
+    await addTags([g]);   // (re)draws it in the pour colour
     render();
     await api.viewer.setCamera(sel, { animationTime: 600 });
   }
+  async function dropFocusTag() {
+    const key = state.focusKey;
+    if (key == null) return;
+    if (state.focusTagAdded) await removeTags([key]);
+    else { const g = state.pours.find((p) => p.key === key); if (g) { state.focusKey = null; await addTags([g]); } }  // back to normal colour
+    state.focusTagAdded = false;
+  }
   async function clearFocus() {
     if (state.focusKey == null) return;
+    await dropFocusTag();
     state.focusKey = null;
     render();
     const all = await everyObject();
@@ -331,7 +343,7 @@
   function onEvent(event) {
     // Connect's own "Reset model" restores opacity and colours: forget our focus/colour state.
     if (event === "viewer.onModelReset") {
-      state.focusKey = null; state.coloured = false; $("chkColour").checked = false;
+      state.focusKey = null; state.focusTagAdded = false; state.coloured = false; $("chkColour").checked = false;
       render();
       return;
     }
