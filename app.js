@@ -389,7 +389,9 @@
           list.rows.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
           `<tr class="tot"><td colspan="2">List</td><td class="num">${f0(list.qty)}</td><td class="num">${f1(list.weight)}</td></tr></table>` +
           (mism
-            ? `<div class="mism">List ${f0(list.weight)} kg vs pour data ${f0(pourKg)} kg — Tekla's export repeats split groups; trust the pour data total.</div>`
+            ? `<div class="mism">List ${f0(list.weight)} kg vs pour data ${f0(pourKg)} kg — ${list.weight > pourKg
+                ? "Tekla's export repeats split groups"
+                : "Tekla's export writes identical groups as identical rows, which the list counts once"}; trust the pour data total.</div>`
             : `<div class="sub">List ${f0(list.weight)} kg matches the pour data (${f0(pourKg)} kg).</div>`) +
           `<div class="acts"><button class="small secondary" data-act="selAllRebar" data-i="${i}">Select all rebar</button></div>`;
       }
