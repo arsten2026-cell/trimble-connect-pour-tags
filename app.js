@@ -38,8 +38,11 @@
   async function loadPours() {
     const api = state.api;
     setStatus("Reading pours from the loaded models…");
-    const modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
+    let modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
+    const proxyCount = (modelObjs || []).reduce((n, m) => n + (m.objects || []).length, 0);
+    if (!proxyCount) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
     const items = [];
+    const psetNames = new Map();
     let scanned = 0;
     for (const m of modelObjs || []) {
       const ids = (m.objects || []).map((o) => o.id);
@@ -49,6 +52,7 @@
         scanned += chunk.length;
         const found = [];
         for (const p of props || []) {
+          for (const s of p.properties || []) psetNames.set(s.name, (psetNames.get(s.name) || 0) + 1);
           const pset = L.readPourPset(p);
           if (pset) found.push({ modelId: m.modelId, id: p.id, name: p.product && p.product.name, props: pset });
         }
@@ -68,7 +72,10 @@
     state.unnumbered = unnumbered;
     render();
     if (!items.length) {
-      setStatus("No pour objects found. Load a Tekla IFC exported with Arsten_PourExport (property set Pour/Такт).", true);
+      const seen = [...psetNames].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, c]) => `${n} (${c})`).join(", ");
+      setStatus(`No pour objects found: ${scanned} objects checked (${proxyCount} ${PROXY}), none with property set ${L.PSET}. ` +
+        `Load a Tekla IFC exported with Arsten_PourExport.` + (seen ? ` Property sets seen: ${seen}` : ""), true);
+      console.warn("[pour-tags] property sets seen", Object.fromEntries(psetNames));
     } else {
       const loose = unnumbered.reduce((n, g) => n + g.objects.length, 0);
       setStatus(`${pours.length} pours, ${items.length} pour objects` + (loose ? ` · ${loose} without a pour number` : ""));
@@ -251,9 +258,17 @@
   };
   renderFieldOptions();
 
+  // Re-read automatically when models are loaded or unloaded (debounced; the event fires in bursts).
+  let reloadTimer = null;
   function onEvent(event) {
     if (event === "viewer.onModelStateChanged" && state.api) {
-      setStatus("Models changed. Click Reload to read the pours again.");
+      setStatus("Models changed, reading pours again…");
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => guarded(async () => {
+        await removeTags([...state.tags.keys()]);
+        await loadPours();
+        if (state.coloured) await applyColours();
+      }), 1500);
     }
   }
 
