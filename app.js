@@ -199,14 +199,18 @@
       await api.viewer.setObjectState(selectorFor(state.unnumbered.flatMap((g) => g.objects)), { color: "#9E9E9E" });
     }
   }
+  // "Show pours only": viewer.isolateEntities (as in Cast unit tags and the MCP bridge). Hiding everything with an
+  // undefined selector and then showing the pours left the pours hidden too.
   async function applyIsolate() {
     const api = state.api;
-    const all = allPourObjects();
     if (state.isolated) {
-      await api.viewer.setObjectState(undefined, { visible: false });
-      await api.viewer.setObjectState(selectorFor(all), { visible: true });
+      const byModel = new Map();
+      for (const o of allPourObjects()) { if (!byModel.has(o.modelId)) byModel.set(o.modelId, []); byModel.get(o.modelId).push(o.id); }
+      if (byModel.size) await api.viewer.isolateEntities([...byModel].map(([modelId, entityIds]) => ({ modelId, entityIds })));
     } else {
       await api.viewer.setObjectState(undefined, { visible: "reset" });
+      const all = await everyObject();
+      if (all.length) await api.viewer.setObjectState(selectorFor(all), { visible: true });
     }
   }
   // Select: select the pour's objects (properties panel shows them) and zoom to them.
