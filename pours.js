@@ -46,6 +46,32 @@
     return null;
   }
 
+  /** Any property set by name from a Connect ObjectProperties record, as {propertyName: value}; null if absent. */
+  function readPset(obj, name) {
+    if (!obj || !Array.isArray(obj.properties)) return null;
+    const set = obj.properties.find((s) => norm(s && s.name) === norm(name));
+    if (!set) return null;
+    const out = {};
+    for (const p of set.properties || []) if (p && p.name != null) out[String(p.name).normalize("NFC")] = p.value;
+    return out;
+  }
+
+  const R = { pos: "Pos/Позиция", size: "Size/Диаметър", qty: "Qty_in_Group/Брой_в_Група", weight: "Group_Weight/Тегло_Група" };
+  /** Rebar groups of one PourUnit (pset Rebar/Армировка) summed per position mark + diameter, sorted by mark. */
+  function summariseRebars(recs) {
+    const map = new Map();
+    for (const r of recs || []) {
+      const pos = String(r[R.pos] == null ? "?" : r[R.pos]).trim() || "?";
+      const size = String(r[R.size] == null ? "" : r[R.size]).trim();
+      const k = pos + "|" + size;
+      if (!map.has(k)) map.set(k, { pos, size, qty: 0, weight: 0 });
+      const e = map.get(k);
+      e.qty += num(r[R.qty]) || 1;
+      e.weight += num(r[R.weight]);
+    }
+    return [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos));
+  }
+
   /** Numbers may arrive as numbers or display strings ("9,9 m³", "1 234.5"). */
   function num(v) {
     if (v == null || v === "") return 0;
@@ -351,7 +377,7 @@
   }
 
   return {
-    PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
+    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });

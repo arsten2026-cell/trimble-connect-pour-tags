@@ -16,6 +16,10 @@
     unnumbered: [],    // groups whose number has no digit
     tags: new Map(),   // pour key -> markup id
     coloured: false,
+    focusKey: null, focusPiece: null, focusTagAdded: false,
+    inspectKey: null,        // pour whose pieces are listed
+    openPieces: new Set(),   // pieces whose contents are expanded
+    contents: new Map(),     // piece key -> PourUnit contents
     isolated: false,
   };
 
@@ -45,6 +49,7 @@
   async function loadPours() {
     const api = state.api;
     setStatus("Reading pours from the loaded models…");
+    state.contents.clear(); state.openPieces.clear();   // runtime ids change when models reload
     let modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
     const proxyCount = (modelObjs || []).reduce((n, m) => n + (m.objects || []).length, 0);
     if (!proxyCount) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
@@ -225,21 +230,44 @@
     for (const m of (await state.api.viewer.getObjects()) || []) for (const o of m.objects || []) out.push({ modelId: m.modelId, id: o.id });
     return out;
   }
-  async function focusPour(g) {
+  const objKey = (o) => o.modelId + ":" + o.id;
+  // Only `objects` keep a colour and full opacity; everything else grey at 50%.
+  async function applyFocus(objects, colour) {
     const api = state.api;
-    if (state.focusKey === g.key) return clearFocus();
-    const sel = selectorFor(g.objects);
-    const mine = new Set(g.objects.map((o) => o.modelId + ":" + o.id));
-    const others = (await everyObject()).filter((o) => !mine.has(o.modelId + ":" + o.id));
+    const mine = new Set(objects.map(objKey));
+    const others = (await everyObject()).filter((o) => !mine.has(objKey(o)));
     if (others.length) await api.viewer.setObjectState(selectorFor(others), { color: FOCUS_GREY, opacity: FOCUS_OPACITY });
-    await api.viewer.setObjectState(sel, { color: g.colour, opacity: 1 });
+    await api.viewer.setObjectState(selectorFor(objects), { color: colour, opacity: 1 });
+    await api.viewer.setCamera(selectorFor(objects), { animationTime: 600 });
+  }
+  // Focus also tags the pour; remember if we added the tag, so moving/clearing focus removes only that tag.
+  async function focusTagFor(g) {
+    if (state.focusKey === g.key) return;
     await dropFocusTag();   // the tag Focus added for the previous pour
     state.focusKey = g.key;
-    // Focus also tags the pour; remember if we added it, so moving/clearing focus removes only that tag.
     state.focusTagAdded = !state.tags.has(g.key);
     await addTags([g]);   // (re)draws it in the pour colour
+  }
+  async function focusPour(g) {
+    if (state.focusKey === g.key && !state.focusPiece) return clearFocus();
+    await focusTagFor(g);
+    state.focusPiece = null;
     render();
-    await api.viewer.setCamera(sel, { animationTime: 600 });
+    await applyFocus(g.objects, g.colour);
+  }
+  // Inspect list: focus one piece of a pour (only that piece opaque). Again on the same piece = back to the pour.
+  async function focusPiece(g, o) {
+    if (state.focusPiece === objKey(o)) return backToPour(g);
+    await focusTagFor(g);
+    state.focusPiece = objKey(o);
+    render();
+    await applyFocus([o], g.colour);
+  }
+  async function backToPour(g) {
+    await focusTagFor(g);
+    state.focusPiece = null;
+    render();
+    await applyFocus(g.objects, g.colour);
   }
   async function dropFocusTag() {
     const key = state.focusKey;
@@ -252,13 +280,99 @@
     if (state.focusKey == null) return;
     await dropFocusTag();
     state.focusKey = null;
+    state.focusPiece = null;
     render();
     const all = await everyObject();
     if (all.length) await state.api.viewer.setObjectState(selectorFor(all), { color: "reset", opacity: 1 });
     if (state.coloured) await applyColours();   // put the per-pour colours back
   }
 
+  // ---------- inspect: the pieces of a pour and what each PourUnit holds ----------
+  // Tekla exports each pour piece as an IfcBuildingElementProxy "PourObject" under an IfcElementAssembly
+  // "PourUnit" that also holds its rebars (pset Rebar/Армировка) and embed / steel assemblies.
+  const HIERARCHY_ASSEMBLY = 4;   // HierarchyType.ElementAssembly
+  async function loadContents(o) {
+    const k = objKey(o);
+    if (state.contents.has(k)) return state.contents.get(k);
+    const api = state.api;
+    let result;
+    try {
+      const parents = (await api.viewer.getHierarchyParents(o.modelId, [o.id], HIERARCHY_ASSEMBLY)) || [];
+      const unit = parents[0];
+      if (!unit) throw new Error("no PourUnit parent");
+      const kids = ((await api.viewer.getHierarchyChildren(o.modelId, [unit.id], HIERARCHY_ASSEMBLY)) || [])
+        .filter((c) => c.id !== o.id);
+      const props = kids.length ? (await api.viewer.getObjectProperties(o.modelId, kids.map((c) => c.id))) || [] : [];
+      const byId = new Map(props.map((p) => [p.id, p]));
+      const rebarRecs = [], others = [];
+      for (const c of kids) {
+        const p = byId.get(c.id);
+        const rebar = p && L.readPset(p, "Rebar/Армировка");
+        if (rebar) rebarRecs.push(rebar);
+        else others.push({ id: c.id, name: (p && p.product && p.product.name) || c.name || "?", cls: p && p.class });
+      }
+      result = { unitId: unit.id, rebars: L.summariseRebars(rebarRecs), rebarIds: kids.filter((c) => byId.get(c.id) && L.readPset(byId.get(c.id), "Rebar/Армировка")).map((c) => c.id),
+        others, all: kids.map((c) => c.id) };
+    } catch (e) {
+      result = { error: errText(e) };
+    }
+    state.contents.set(k, result);
+    return result;
+  }
+
   // ---------- rendering ----------
+  // Pieces of a pour, in a stable order: by pour type, then biggest first.
+  function piecesOf(g) {
+    if (!g._pieces) {
+      g._pieces = [...g.objects].sort((a, b) =>
+        String((a.props || {})[L.P.type] || "").localeCompare(String((b.props || {})[L.P.type] || "")) ||
+        L.num((b.props || {})[L.P.volume]) - L.num((a.props || {})[L.P.volume]));
+    }
+    return g._pieces;
+  }
+  function inspectRow(g, i) {
+    const pcs = piecesOf(g);
+    const items = pcs.map((o, j) => {
+      const pr = o.props || {};
+      const type = String(pr[L.P.type] || "–").split("/")[0];
+      const fs = L.num(pr[L.P.fwSides]), fb = L.num(pr[L.P.fwBottom]), rb = L.num(pr[L.P.rebar]);
+      const emb = String(pr[L.P.embeds] || "").trim();
+      const k = objKey(o);
+      const open = state.openPieces.has(k);
+      const focused = state.focusPiece === k;
+      const bits = [`${L.fmtVolume(L.num(pr[L.P.volume]))} m³`];
+      if (fs || fb) bits.push(`кофр. ${f1(fs)} + ${f1(fb)} m²`);
+      if (rb) bits.push(`${f0(rb)} kg`);
+      return `<li class="${focused ? "focused" : ""}">
+          <div><span class="pno">${j + 1}</span> <b>${esc(type)}</b> · ${bits.join(" · ")}</div>
+          ${emb ? `<div class="sub">Embeds ${esc(emb)}</div>` : ""}
+          ${g.models.length > 1 ? `<div class="sub">${esc(L.shortModelName(o.modelName || o.modelId))}</div>` : ""}
+          <div class="acts"><button class="small secondary" data-act="pSelect" data-i="${i}" data-j="${j}">Select</button><button
+            class="small secondary" data-act="pZoom" data-i="${i}" data-j="${j}">Zoom</button><button
+            class="small ${focused ? "on" : "secondary"}" data-act="pFocus" data-i="${i}" data-j="${j}" title="Only this piece opaque">Focus</button><button
+            class="small secondary" data-act="pOpen" data-i="${i}" data-j="${j}">Contents ${open ? "▴" : "▾"}</button></div>
+          ${open ? contentsHtml(i, j, state.contents.get(k)) : ""}</li>`;
+    }).join("");
+    const pieceFocus = state.focusKey === g.key && state.focusPiece;
+    return `<tr class="insp"><td colspan="3">
+        <div class="insphead">${pcs.length} pieces of ${esc(g.label)}${pieceFocus ? ` <button class="small secondary" data-act="backToPour" data-i="${i}">Back to pour</button>` : ""}</div>
+        <ol class="pieces">${items}</ol></td></tr>`;
+  }
+  function contentsHtml(i, j, c) {
+    if (!c) return `<div class="contents sub">Loading…</div>`;
+    if (c.error) return `<div class="contents sub">Contents not available (${esc(c.error)}).</div>`;
+    const reb = c.rebars.length
+      ? `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs</th><th class="num">kg</th></tr>` +
+        c.rebars.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
+        `<tr class="tot"><td colspan="2">Rebar</td><td class="num">${f0(c.rebars.reduce((n, r) => n + r.qty, 0))}</td><td class="num">${f1(c.rebars.reduce((n, r) => n + r.weight, 0))}</td></tr></table>`
+      : `<div class="sub">No rebar in this PourUnit.</div>`;
+    const oth = c.others.length
+      ? `<div class="sub">Also in the PourUnit: ${esc([...c.others.reduce((m, o) => m.set(o.name, (m.get(o.name) || 0) + 1), new Map())].map(([n, k]) => k > 1 ? `${n} ×${k}` : n).join(", "))}</div>`
+      : "";
+    const sel = c.rebarIds.length ? `<div class="acts"><button class="small secondary" data-act="pSelRebar" data-i="${i}" data-j="${j}">Select rebar</button></div>` : "";
+    return `<div class="contents">${reb}${oth}${sel}</div>`;
+  }
+
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const f1 = (v) => (Math.round(v * 10) / 10).toLocaleString("en-US");
   const f0 = (v) => Math.round(v).toLocaleString("en-US");
@@ -274,14 +388,15 @@
         const types = g.types.map((t) => t.split("/")[0]).join(", ");
         const emb = g.embeds.length ? `<div class="emb">Embeds ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
         return `<tr>
-          <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span>
+          <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span><button
+              class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="List the pieces this pour is made of">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
             <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
             ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
             <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
               class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
               class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? "Clear focus" : "Zoom and make everything else transparent"}">Focus</button></div></td>
           <td class="num">${L.fmtVolume(g.totals.volume)}</td>
-          <td class="num">${f0(g.totals.rebar)}</td></tr>`;
+          <td class="num">${f0(g.totals.rebar)}</td></tr>` + (state.inspectKey === g.key ? inspectRow(g, i) : "");
       }).join("");
       const t = state.pours.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
       $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
@@ -323,7 +438,30 @@
         if (state.tags.has(g.key)) await removeTags([g.key]);
         else if (!(await addTags([g]))) setStatus(`${g.label}: no geometry to anchor the tag`, true);
         render();
-      } else if (b.dataset.act === "select") await selectPour(state.pours[i]);
+      } else if (b.dataset.act === "inspect") {
+        const g = state.pours[i];
+        state.inspectKey = state.inspectKey === g.key ? null : g.key;
+        render();
+      } else if (b.dataset.act && b.dataset.act[0] === "p" && b.dataset.j != null) {
+        const g = state.pours[i], o = piecesOf(g)[+b.dataset.j];
+        const sel = selectorFor([o]);
+        if (b.dataset.act === "pSelect") { await state.api.viewer.setSelection(sel, "set"); await state.api.viewer.setCamera(sel, { animationTime: 600 }); }
+        else if (b.dataset.act === "pZoom") await state.api.viewer.setCamera(sel, { animationTime: 600 });
+        else if (b.dataset.act === "pFocus") await focusPiece(g, o);
+        else if (b.dataset.act === "pOpen") {
+          const k = objKey(o);
+          if (state.openPieces.has(k)) { state.openPieces.delete(k); render(); }
+          else { state.openPieces.add(k); render(); await loadContents(o); render(); }
+        } else if (b.dataset.act === "pSelRebar") {
+          const c = state.contents.get(objKey(o));
+          if (c && c.rebarIds.length) {
+            const rs = { modelObjectIds: [{ modelId: o.modelId, objectRuntimeIds: c.rebarIds }] };
+            await state.api.viewer.setSelection(rs, "set");
+            await state.api.viewer.setCamera(rs, { animationTime: 600 });
+          }
+        }
+      } else if (b.dataset.act === "backToPour") await backToPour(state.pours[i]);
+      else if (b.dataset.act === "select") await selectPour(state.pours[i]);
       else if (b.dataset.act === "focus") await focusPour(state.pours[i]);
       else if (b.dataset.act === "selectLoose") await selectPour(state.unnumbered[i]);
     });
