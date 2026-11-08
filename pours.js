@@ -104,11 +104,11 @@
     return { rows, qty: rows.reduce((n, r) => n + r.qty, 0), weight: rows.reduce((n, r) => n + r.weight, 0) };
   }
 
-  /** List total vs pour-data total: differs when more than ~2 % apart (or one side is zero and the other not). */
+  /** List total vs pour-data total: differs when more than ~2 % and more than 1 kg apart. */
   function rebarMismatch(listKg, pourKg) {
     const a = num(listKg), b = num(pourKg);
     if (a === 0 && b === 0) return false;
-    return Math.abs(a - b) > 0.02 * Math.max(a, b);
+    return Math.abs(a - b) > Math.max(0.02 * Math.max(a, b), 1);   // and at least 1 kg, so tiny pours don't flag on rounding
   }
 
   /** Numbers may arrive as numbers or display strings ("9,9 m³", "1 234.5"). */
