@@ -203,6 +203,11 @@
       const t = state.pours.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
       $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td><td></td></tr>`;
     }
+    const unnumbered = state.pours.filter((g) => g.embeds.some((e) => L.isUnnumbered(e.code))).map((g) => g.label);
+    $("embWarn").hidden = !unnumbered.length;
+    $("embWarn").textContent = unnumbered.length
+      ? `Embed marks show "(?)" in ${unnumbered.join(", ")}: numbering was not up to date in Tekla when this was exported.`
+      : "";
     const loose = state.unnumbered;
     $("looseBox").hidden = !loose.length;
     $("looseRows").innerHTML = loose.map((g, i) => `<tr>

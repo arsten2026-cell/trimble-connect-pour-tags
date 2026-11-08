@@ -85,6 +85,8 @@
     for (const list of lists) for (const e of list) map.set(e.code, (map.get(e.code) || 0) + e.count);
     return [...map].map(([code, count]) => ({ code, count }));
   }
+  /** Tekla writes "(?)" in a position number when the part is not numbered (or numbering is out of date). */
+  const isUnnumbered = (code) => /\(\?\)/.test(code);
   const formatEmbeds = (list) => list.map((e) => (e.count > 1 ? `${e.code} x${e.count}` : e.code)).join(", ");
 
   /** Natural sort: TAKT 2 before TAKT 10. */
@@ -205,7 +207,7 @@
   }
 
   return {
-    PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds,
+    PSET, P, FIELDS, PALETTE, readPourPset, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, pickAnchorObject, topCentre, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });
