@@ -20,7 +20,8 @@
     fwSides: "Formwork_Sides/Кофраж_Страни",
     fwBottom: "Formwork_Bottom/Кофраж_Дъно",
     embeds: "Embedded_Parts/Закладни_Части",
-    parts: "Parts/Елементи",   // optional (newer Arsten_PourExport): "<name> <profile> [<pos>] xN; ..."
+    parts: "Parts/Елементи",
+    rebarList: "Rebar_List/Армировка_Списък",   // optional (newer Arsten_PourExport): "2.1 Ø14 x90 166.6kg; ..."   // optional (newer Arsten_PourExport): "<name> <profile> [<pos>] xN; ..."
     date: "Pour_Data_Date/Дата_Данни",
   };
 
@@ -99,6 +100,34 @@
         e.qty += num(r.qty);
         e.weight += num(r.weight);
       }
+    }
+    const rows = [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos) || naturalCompare(a.size, b.size));
+    return { rows, qty: rows.reduce((n, r) => n + r.qty, 0), weight: rows.reduce((n, r) => n + r.weight, 0) };
+  }
+
+  /**
+   * Optional Rebar_List/Армировка_Списък (newer Arsten_PourExport, counted in Tekla per pour object):
+   * "2.1 Ø14 x90 166.6kg; 2.2 Ø8 x126 93.5kg" -> [{pos, size, qty, weight}]. Weight may be missing.
+   */
+  function parseRebarList(text) {
+    const out = [];
+    for (const item of str(text).split(/[;\n]/)) {
+      const t = item.trim();
+      if (!t) continue;
+      const m = t.match(/^(\S+)\s+(?:Ø|ø|O|D)?\s*([\d.,]+)\s*[x×]\s*(\d+)(?:\s+([\d.,]+)\s*kg)?$/i);
+      if (m) out.push({ pos: m[1], size: m[2].replace(",", "."), qty: parseInt(m[3], 10), weight: m[4] ? num(m[4]) : 0 });
+    }
+    return out;
+  }
+
+  /** Sum per-piece Rebar_List entries for a whole pour by Pos + Ø (no de-duplication: Tekla counted them). */
+  function sumRebarLists(lists) {
+    const map = new Map();
+    for (const list of lists || []) for (const r of list || []) {
+      const key = r.pos + "|" + r.size;
+      if (!map.has(key)) map.set(key, { pos: r.pos, size: r.size, qty: 0, weight: 0 });
+      const e = map.get(key);
+      e.qty += r.qty; e.weight += r.weight;
     }
     const rows = [...map.values()].sort((a, b) => naturalCompare(a.pos, b.pos) || naturalCompare(a.size, b.size));
     return { rows, qty: rows.reduce((n, r) => n + r.qty, 0), weight: rows.reduce((n, r) => n + r.weight, 0) };
@@ -433,7 +462,7 @@
   }
 
   return {
-    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, pourRebarList, rebarMismatch, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
+    PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, pourRebarList, rebarMismatch, parseRebarList, sumRebarLists, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
   };
 });
