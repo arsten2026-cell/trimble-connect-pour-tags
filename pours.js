@@ -272,10 +272,13 @@
     return parts.join((o.layout || "lines") === "single" ? ", " : "\n");
   }
 
-  /** Distinct, readable colours for pour numbers (cycled). */
+  /** Pour colours, used for the pours AND their labels when "Colour each pour" is on. Every colour reads as
+   *  text on Connect's light background (contrast >= 3.5:1 vs #F0F0F0; markups have no outline/halo option),
+   *  the first 10 are >= 23 ΔE apart (closest: the two blues, 1 and 10), and none is close to the tag red or the model's default purple.
+   *  Similar pairs sit 4+ pour numbers apart. Cycled after 13. */
   const PALETTE = [
-    "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4", "#42D4F4", "#F032E6", "#BFEF45",
-    "#469990", "#DCBEFF", "#9A6324", "#800000", "#AAFFC3", "#808000", "#000075", "#FFD8B1",
+    "#1F4FD1", "#9E7700", "#C51162", "#00838F", "#B35900", "#AA00FF", "#2E7D32", "#4E342E", "#9C27B0", "#0D47A1",
+    "#880E4F", "#37474F", "#00695C",
   ];
   const colourFor = (index) => PALETTE[index % PALETTE.length];
   function hexToRgba(hex, a) {

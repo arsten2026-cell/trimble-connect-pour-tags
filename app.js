@@ -114,7 +114,8 @@
     const side = settings.side * 1000;
     return {
       text: L.labelText(g, settings.fields, settings),
-      color: TAG_COLOUR,
+      // Same colour as the pour when colouring is on, otherwise the standard tag red.
+      color: state.coloured && g.colour ? L.hexToRgba(g.colour) : TAG_COLOUR,
       start: { positionX: p.x, positionY: p.y, positionZ: p.z, modelId: pl.object.modelId, objectId: pl.object.id },
       end: { positionX: p.x + pl.away.x * side, positionY: p.y + pl.away.y * side, positionZ: p.z + lift },
     };
@@ -260,7 +261,12 @@
     await loadPours();
     await applyColours();
   });
-  $("chkColour").onchange = (e) => guarded(async () => { state.coloured = e.target.checked; await applyColours(); render(); });
+  $("chkColour").onchange = (e) => guarded(async () => {
+    state.coloured = e.target.checked;
+    await applyColours();
+    await refreshTags();   // recolour labels that are shown
+    render();
+  });
   $("chkIsolate").onchange = (e) => guarded(async () => { state.isolated = e.target.checked; await applyIsolate(); });
   $("fields").onchange = (e) => {
     const id = e.target.dataset.field;
