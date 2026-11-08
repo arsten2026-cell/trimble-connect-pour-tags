@@ -337,39 +337,13 @@
     const more = parts.length - shown.length;
     return `<div class="sub" title="${esc(all)}">Parts: ${esc(L.formatEmbeds(shown))}${more > 0 ? ` +${more} more` : ""}</div>`;
   }
+  // Inspect: only the whole-pour rebar and embed lists (no per-piece list).
   function inspectRow(g, i) {
-    const pcs = piecesOf(g);
-    const items = pcs.map((o, j) => {
-      const pr = o.props || {};
-      const type = String(pr[L.P.type] || "–").split("/")[0];
-      const fs = L.num(pr[L.P.fwSides]), fb = L.num(pr[L.P.fwBottom]), rb = L.num(pr[L.P.rebar]);
-      const emb = String(pr[L.P.embeds] || "").trim();
-      const parts = L.parseParts(pr[L.P.parts]);   // optional field; [] in older exports
-      const k = objKey(o);
-      const open = state.openPieces.has(k);
-      const focused = state.focusPiece === k;
-      const bits = [`${L.fmtVolume(L.num(pr[L.P.volume]))} m³`];
-      if (fs || fb) bits.push(`кофр. ${f1(fs)} + ${f1(fb)} m²`);
-      if (rb) bits.push(`${f0(rb)} kg`);
-      return `<li class="${focused ? "focused" : ""}">
-          ${parts.length
-            ? `<div><span class="pno">${j + 1}</span> <b>${esc(L.formatEmbeds(parts))}</b></div><div class="sub pdet">${esc(type)} · ${bits.join(" · ")}</div>`
-            : `<div><span class="pno">${j + 1}</span> <b>${esc(type)}</b> · ${bits.join(" · ")}</div>`}
-          ${emb ? `<div class="sub">Embeds ${esc(emb)}</div>` : ""}
-          ${g.models.length > 1 ? `<div class="sub">${esc(L.shortModelName(o.modelName || o.modelId))}</div>` : ""}
-          <div class="acts"><button class="small secondary" data-act="pSelect" data-i="${i}" data-j="${j}">Select</button><button
-            class="small secondary" data-act="pZoom" data-i="${i}" data-j="${j}">Zoom</button><button
-            class="small ${focused ? "on" : "secondary"}" data-act="pFocus" data-i="${i}" data-j="${j}" title="Only this piece opaque">Focus</button><button
-            class="small secondary" data-act="pOpen" data-i="${i}" data-j="${j}">Contents ${open ? "▴" : "▾"}</button></div>
-          ${open ? contentsHtml(i, j, state.contents.get(k), rb) : ""}</li>`;
-    }).join("");
-    const pieceFocus = state.focusKey === g.key && state.focusPiece;
     return `<tr class="insp"><td colspan="3">
-        <div class="insphead">${pcs.length} pieces of ${esc(g.label)}${pieceFocus ? ` <button class="small secondary" data-act="backToPour" data-i="${i}">Back to pour</button>` : ""}</div>
-        ${pourLists(g, i)}
-        <ol class="pieces">${items}</ol></td></tr>`;
+        <div class="insphead">${esc(g.label)} · ${piecesOf(g).length} pieces</div>
+        ${pourLists(g, i)}</td></tr>`;
   }
-  // Whole-pour rebar and embed lists, shown above the pieces in Inspect.
+  // Whole-pour rebar and embed lists (Inspect).
   function pourLists(g, i) {
     const pcs = piecesOf(g);
     const cs = pcs.map((o) => state.contents.get(objKey(o)));
@@ -413,20 +387,7 @@
       if (state.inspectKey === g.key) render();
     }
   }
-  function contentsHtml(i, j, c, rebarKg) {
-    if (!c) return `<div class="contents sub">Loading…</div>`;
-    if (c.error) return `<div class="contents sub">Contents not available (${esc(c.error)}).</div>`;
-    const reb = c.rebars.length
-      ? `<table class="rebars"><tr><th>Pos</th><th>Ø</th><th class="num">pcs/gr</th><th class="num">kg/gr</th></tr>` +
-        c.rebars.map((r) => `<tr><td>${esc(r.pos)}</td><td>${esc(r.size)}</td><td class="num">${f0(r.qty)}</td><td class="num">${f1(r.weight)}</td></tr>`).join("") +
-        `</table><div class="sub">Rebar groups as Tekla exported them (not summed). Piece total from the pour data: ${f0(rebarKg)} kg.</div>`
-      : `<div class="sub">No rebar in this PourUnit.</div>`;
-    const oth = c.others.length
-      ? `<div class="sub">Also in the PourUnit: ${esc([...c.others.reduce((m, o) => m.set(o.name, (m.get(o.name) || 0) + 1), new Map())].map(([n, k]) => k > 1 ? `${n} ×${k}` : n).join(", "))}</div>`
-      : "";
-    const sel = c.rebarIds.length ? `<div class="acts"><button class="small secondary" data-act="pSelRebar" data-i="${i}" data-j="${j}">Select rebar</button></div>` : "";
-    return `<div class="contents">${reb}${oth}${sel}</div>`;
-  }
+
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const f1 = (v) => (Math.round(v * 10) / 10).toLocaleString("en-US");
