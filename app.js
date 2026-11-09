@@ -16,6 +16,7 @@
     unnumbered: [],    // groups whose number has no digit
     tags: new Map(),   // pour key -> markup id
     coloured: false,
+    selKeys: null,           // Show selected: pour keys of the model selection (null = off)
     focusKey: null, focusTagAdded: false,
     inspectKey: null,        // pour whose pieces are listed
     isolated: false,
@@ -306,7 +307,12 @@
       rows.innerHTML = `<tr><td colspan="3" class="empty">No numbered pours in the loaded models.</td></tr>`;
       $("foot").innerHTML = "";
     } else {
-      rows.innerHTML = state.pours.map((g, i) => {
+      const shown = (g) => !state.selKeys || state.selKeys.has(g.key);
+      const visible = state.pours.filter(shown);
+      rows.innerHTML = !visible.length
+        ? `<tr><td colspan="3" class="empty">None of the selected objects is in a numbered pour.</td></tr>`
+        : state.pours.map((g, i) => {
+        if (!shown(g)) return "";
         const tagged = state.tags.has(g.key);
         const types = g.types.map((t) => t.split("/")[0]).join(", ");
         const emb = g.embeds.length ? `<div class="emb">Embeds ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
@@ -321,21 +327,55 @@
           <td class="num">${L.fmtVolume(g.totals.volume)}</td>
           <td class="num">${f0(g.totals.rebar)}</td></tr>` + (state.inspectKey === g.key ? inspectRow(g) : "");
       }).join("");
-      const t = state.pours.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
-      $("foot").innerHTML = `<tr><td>Total (${state.pours.length})</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
+      const t = visible.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
+      $("foot").innerHTML = `<tr><td>${state.selKeys ? `Selected (${visible.length} of ${state.pours.length})` : `Total (${state.pours.length})`}</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
     }
     const unnumbered = state.pours.filter((g) => g.embeds.some((e) => L.isUnnumbered(e.code))).map((g) => g.label);
     $("embWarn").hidden = !unnumbered.length;
     $("embWarn").textContent = unnumbered.length
       ? `Embed marks show "(?)" in ${unnumbered.join(", ")}: numbering was not up to date in Tekla when this was exported.`
       : "";
-    const loose = state.unnumbered;
+    const loose = state.selKeys ? state.unnumbered.filter((g) => state.selKeys.has(g.key)) : state.unnumbered;
     $("looseBox").hidden = !loose.length;
     $("looseRows").innerHTML = loose.map((g, i) => `<tr>
         <td><span class="name">"${esc(g.label)}"</span><div class="sub">${g.objects.length} obj · ${esc(g.types.map((t) => t.split("/")[0]).join(", ") || "–")}</div>
-          <div class="acts"><button class="small secondary" data-act="selectLoose" data-i="${i}" title="Select these objects and zoom to them">Select</button></div></td>
+          <div class="acts"><button class="small secondary" data-act="selectLoose" data-i="${state.unnumbered.indexOf(g)}" title="Select these objects and zoom to them">Select</button></div></td>
         <td class="num">${L.fmtVolume(g.totals.volume)} m³</td></tr>`).join("");
     $("btnClearFocus").hidden = state.focusKey == null;
+    $("btnShowSel").className = "small " + (state.selKeys ? "on" : "secondary");
+    $("btnShowAllRows").hidden = !state.selKeys;
+  }
+
+  // "Show selected": list only the pours of what is selected in the model. A pour object maps directly; anything
+  // else (e.g. a rebar) is traced through its PourUnit (ElementAssembly parent) to the pour object beside it.
+  async function showSelected() {
+    const api = state.api;
+    const sel = (await api.viewer.getSelection()) || [];
+    const index = new Map();
+    for (const g of [...state.pours, ...state.unnumbered]) for (const o of g.objects) index.set(objKey(o), g.key);
+    const keys = new Set();
+    const unmatched = [];
+    let n = 0;
+    for (const m of sel) for (const id of m.objectRuntimeIds || []) {
+      n++;
+      const k = index.get(m.modelId + ":" + id);
+      if (k) keys.add(k); else unmatched.push({ modelId: m.modelId, id });
+    }
+    if (!n) return setStatus("Nothing is selected in the model. Select pours first, then click Show selected.", true);
+    for (const o of unmatched.slice(0, 60)) {
+      try {
+        const unit = ((await api.viewer.getHierarchyParents(o.modelId, [o.id], 4)) || [])[0];
+        if (!unit) continue;
+        for (const c of (await api.viewer.getHierarchyChildren(o.modelId, [unit.id], 4)) || []) {
+          const k = index.get(o.modelId + ":" + c.id);
+          if (k) { keys.add(k); break; }
+        }
+      } catch {}
+    }
+    if (!keys.size) return setStatus(`None of the ${n} selected objects belongs to a pour.`, true);
+    state.selKeys = keys;
+    setStatus(`Showing the ${keys.size} pour${keys.size > 1 ? "s" : ""} of the selection (${n} objects).`);
+    render();
   }
 
   function renderFieldOptions() {
@@ -370,6 +410,8 @@
       else if (b.dataset.act === "selectLoose") await selectPour(state.unnumbered[i]);
     });
   });
+  $("btnShowSel").onclick = () => guarded(showSelected);
+  $("btnShowAllRows").onclick = () => { state.selKeys = null; setStatus("Showing all pours"); render(); };
   $("btnShowAll").onclick = () => guarded(showAll);
   $("btnClear").onclick = () => guarded(clearAll);
   $("btnClearFocus").onclick = () => guarded(clearFocus);
