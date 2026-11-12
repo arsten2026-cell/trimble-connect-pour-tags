@@ -450,7 +450,9 @@
 
   // Re-read automatically when models are loaded or unloaded (debounced; the event fires in bursts).
   let reloadTimer = null;
-  function onEvent(event) {
+  function onEvent(event, data) {
+    if (tokenHelper) tokenHelper.onEvent(event, data);
+    if (denied) return;
     // Connect's own "Reset model" restores opacity and colours: forget our focus/colour state.
     if (event === "viewer.onModelReset") {
       state.focusKey = null; state.focusTagAdded = false; state.coloured = false; $("chkColour").checked = false;
@@ -469,7 +471,22 @@
   }
 
   // ---------- start ----------
+
+  // ---------- access (shared/arsten-access.js): ADMIN or GENERAL CONTRACTOR group only ----------
+  let tokenHelper = null, denied = false;
+  async function gate(api) {
+    if (window.ARSTEN_DEMO) return true;
+    tokenHelper = ArstenAccess.tokenGetter(api);
+    setStatus("Checking access… / Проверка на достъпа…");
+    const access = await ArstenAccess.check({ api, getToken: tokenHelper.getToken, app: "execution" });
+    if (access.allowed) return true;
+    denied = true;
+    ArstenAccess.renderDenied(document.body, "bg", access);
+    return false;
+  }
+
   async function start(api) {
+    if (!(await gate(api))) return;   // no data is read before access is confirmed
     state.api = api;
     await guarded(loadPours);
   }
