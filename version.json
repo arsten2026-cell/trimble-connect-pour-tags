@@ -1,0 +1,14 @@
+{
+  "panel": "pour-tags",
+  "repo": "arsten2026-cell/trimble-connect-pour-tags",
+  "id": "0389d35010",
+  "built": "2026-11-16T21:53:08.044Z",
+  "files": {
+    "app.js": "b802497703",
+    "pours.js": "98382158a7",
+    "arsten-access.js": "c29c3b3f4f",
+    "manifest.json": "7a40ae9b05",
+    "icon.svg": "110b339690",
+    "index.html": "513ec8e590"
+  }
+}
