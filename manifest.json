@@ -1,5 +1,5 @@
 {
-  "title": "Pour tags (Arsten)",
+  "title": "Pour tags (Arsten / Multiplan)",
   "url": "https://arsten2026-cell.github.io/trimble-connect-pour-tags/index.html",
   "icon": "https://arsten2026-cell.github.io/trimble-connect-pour-tags/icon.svg",
   "description": "Tags each concrete pour (такт) from the Tekla Pour/Такт property set with a leader label: pour number, concrete volume and embedded parts.",

@@ -195,10 +195,10 @@
       await api.viewer.setObjectState(selectorFor(all), { color: "reset" });
       return;
     }
-    for (const g of state.pours) await api.viewer.setObjectState(selectorFor(g.objects), { color: g.colour });
-    if (state.unnumbered.length) {
-      await api.viewer.setObjectState(selectorFor(state.unnumbered.flatMap((g) => g.objects)), { color: "#9E9E9E" });
-    }
+    // one call per colour, not per pour (speed audit item 4); unnumbered grey last, as before
+    const entries = state.pours.map((g) => ({ objects: g.objects, colour: g.colour }));
+    if (state.unnumbered.length) entries.push({ objects: state.unnumbered.flatMap((g) => g.objects), colour: "#9E9E9E" });
+    for (const b of L.colourBatches(entries)) await api.viewer.setObjectState(selectorFor(b.objects), { color: b.colour });
   }
   // "Show pours only": viewer.isolateEntities (as in Cast unit tags and the MCP bridge). Hiding everything with an
   // undefined selector and then showing the pours left the pours hidden too.
@@ -481,7 +481,7 @@
     const access = await ArstenAccess.check({ api, getToken: tokenHelper.getToken, app: "execution" });
     if (access.allowed) return true;
     denied = true;
-    ArstenAccess.renderDenied(document.body, "bg", access);
+    ArstenAccess.renderDenied(document.body, settings.lang, access);   // the language chosen in this panel (round 11, L2)
     return false;
   }
 
