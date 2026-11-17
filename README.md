@@ -1,4 +1,4 @@
-# Pour tags (Arsten), Trimble Connect 3D-viewer extension
+# Pour tags (Arsten / Multiplan), Trimble Connect 3D-viewer extension
 
 Lists the concrete pours (такт) in the loaded Tekla IFC models and tags each pour number with a red leader
 label, for example `TAKT 5, 9.9 m³, Embeds EB01`.

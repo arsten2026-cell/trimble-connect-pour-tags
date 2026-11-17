@@ -38,7 +38,35 @@
   })();
   const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {} };
 
+  // ---------- interface language (A10): shared with every tool (shared/arsten-i18n.js); BG by default ----------
+  // Not the label language: settings.lang is what the tags in the model say.
+  const I18N = window.ArstenI18n;
+  let ui = I18N ? I18N.getLang() : "bg";
+  const L2 = (b, e) => (ui === "bg" ? b : e);
+  const pl = (n, one, many, en1, enN) => (ui === "bg" ? (I18N ? I18N.plural(n, one, many) : many) : n === 1 ? en1 : enN);
+  /** The static texts of index.html: data-en / data-en-title hold the English, the Bulgarian is kept on first use. */
+  function applyStatic() {
+    document.documentElement.lang = ui;
+    if ($("selUi")) $("selUi").value = ui;
+    document.querySelectorAll("[data-en]").forEach((el) => { if (el.dataset.bg == null) el.dataset.bg = el.textContent; el.textContent = ui === "en" ? el.dataset.en : el.dataset.bg; });
+    document.querySelectorAll("[data-en-title]").forEach((el) => { if (el.dataset.bgTitle == null) el.dataset.bgTitle = el.title; el.title = ui === "en" ? el.dataset.enTitle : el.dataset.bgTitle; });
+  }
+  /** A field name of pours.js ("Pour number · Такт") in the interface language. */
+  const fieldName = (f) => { const [en, bg] = String(f.label).split(" · "); return ui === "en" || !bg ? en : bg.charAt(0).toUpperCase() + bg.slice(1); };
+  /** The model-check warnings of pours.js (English) in the interface language. */
+  function warnText(w) {
+    if (ui === "en") return w;
+    return String(w)
+      .replace(/^(\d+) versions of (.+) are loaded: counting the latest only\.$/, "Заредени са $1 версии на $2: брои се само последната.")
+      .replace(/^(\d+) pour objects appear twice in (.+): counted once\.$/, "$1 обекта от тактове са два пъти в $2: броят се веднъж.")
+      .replace(/^(\d+) pour objects are in both (.+) and (.+) \(same IFC GUID\): counted once, from (.+)\.$/, "$1 обекта от тактове са и в $2, и в $3 (същият IFC GUID): броят се веднъж, от $4.");
+  }
+  // text may be a function: then it is built again in the new language after a language switch (round 19 L4)
+  let statusAgain = null;
+  const relabelStatus = () => { if (statusAgain) setStatus(statusAgain.text, statusAgain.bad); if (window.ArstenDiag && ArstenDiag.relabel) ArstenDiag.relabel(); };
   function setStatus(text, bad) {
+    statusAgain = typeof text === "function" ? { text, bad } : null;
+    if (typeof text === "function") text = text();
     $("status").textContent = text;
     $("status").className = "status" + (bad ? " bad" : "");
   }
@@ -47,7 +75,7 @@
   // ---------- reading the model ----------
   async function loadPours() {
     const api = state.api;
-    setStatus("Reading pours from the loaded models…");
+    setStatus(L2("Четене на тактовете от заредените модели…", "Reading pours from the loaded models…"));
     let modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
     const proxyCount = (modelObjs || []).reduce((n, m) => n + (m.objects || []).length, 0);
     if (!proxyCount) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
@@ -78,7 +106,7 @@
           } catch {}
           items.push(...found);
         }
-        setStatus(`Reading pours… ${scanned} objects checked, ${items.length} pour objects found`);
+        setStatus(L2(`Четене на тактовете… проверени ${scanned} обекта, намерени ${items.length} обекта от тактове`, `Reading pours… ${scanned} objects checked, ${items.length} pour objects found`));
       }
     }
     // Several models: pour numbers are project-wide, so they merge; never count a pour object twice.
@@ -94,14 +122,16 @@
     render();
     if (!items.length) {
       const seen = [...psetNames].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, c]) => `${n} (${c})`).join(", ");
-      setStatus(`No pour objects found: ${scanned} objects checked (${proxyCount} ${PROXY}), none with property set ${L.PSET}. ` +
-        `Load a Tekla IFC exported with Arsten_PourExport.` + (seen ? ` Property sets seen: ${seen}` : ""), true);
+      setStatus(() => L2(`Няма обекти от тактове: проверени ${scanned} обекта (${proxyCount} ${PROXY}), нито един с набор свойства ${L.PSET}. ` +
+        `Заредете Tekla IFC, експортиран с Arsten_PourExport.` + (seen ? ` Видени набори свойства: ${seen}` : ""),
+        `No pour objects found: ${scanned} objects checked (${proxyCount} ${PROXY}), none with property set ${L.PSET}. ` +
+        `Load a Tekla IFC exported with Arsten_PourExport.` + (seen ? ` Property sets seen: ${seen}` : "")), true);
       console.warn("[pour-tags] property sets seen", Object.fromEntries(psetNames));
     } else {
       const loose = unnumbered.reduce((n, g) => n + g.objects.length, 0);
       const nModels = new Set(counted.map((it) => it.modelId)).size;
-      setStatus(`${pours.length} pours, ${counted.length} pour objects` + (nModels > 1 ? ` from ${nModels} models` : "") +
-        (loose ? ` · ${loose} without a pour number` : "") + (dd.warnings.length ? " · ⚠ " + dd.warnings.join(" ") : ""), dd.warnings.length > 0);
+      setStatus(() => `${pours.length} ${pl(pours.length, "такт", "такта", "pour", "pours")}, ${counted.length} ${pl(counted.length, "обект", "обекта", "pour object", "pour objects")}` + (nModels > 1 ? L2(` от ${nModels} модела`, ` from ${nModels} models`) : "") +
+        (loose ? L2(` · ${loose} без номер на такт`, ` · ${loose} without a pour number`) : "") + (dd.warnings.length ? " · ⚠ " + dd.warnings.map(warnText).join(" ") : ""), dd.warnings.length > 0);
     }
     for (const b of ["btnShowAll", "btnClear", "btnReload"]) $(b).disabled = false;
   }
@@ -174,12 +204,12 @@
   async function showAll() {
     const n = await addTags(state.pours);
     const missing = state.pours.length - n;
-    setStatus(`${n} tags shown` + (missing ? ` · ${missing} pours have no geometry to anchor to` : ""));
+    setStatus(L2(`Показани етикети: ${n}`, `${n} tags shown`) + (missing ? ` · ${missing} ${pl(missing, "такт няма", "такта нямат", "pour has", "pours have")} ${L2("геометрия за етикета", "no geometry to anchor to")}` : ""));
     render();
   }
   async function clearAll() {
     await removeTags([...state.tags.keys()]);
-    setStatus("Tags cleared");
+    setStatus(L2("Етикетите са изчистени", "Tags cleared"));
     render();
   }
   async function refreshTags() {
@@ -288,59 +318,61 @@
     const pcs = piecesOf(g);
     const withEmb = pcs.filter((o) => String((o.props || {})[L.P.embeds] || "").trim()).length;
     const emb = g.embeds.length
-      ? `<table class="rebars"><tr><th>Mark</th><th class="num">Qty</th></tr>` +
+      ? `<table class="rebars"><tr><th>${L2("Марка", "Mark")}</th><th class="num">${L2("Бр.", "Qty")}</th></tr>` +
         g.embeds.map((e) => `<tr><td>${esc(e.code)}</td><td class="num">${f0(e.count)}</td></tr>`).join("") +
-        `</table><div class="sub">${withEmb} of ${pcs.length} pieces contain embeds.</div>`
-      : `<div class="sub">No embedded parts.</div>`;
+        `</table><div class="sub">${L2(`${withEmb} от ${pcs.length} части съдържат закладни части.`, `${withEmb} of ${pcs.length} pieces contain embeds.`)}</div>`
+      : `<div class="sub">${L2("Няма закладни части.", "No embedded parts.")}</div>`;
     return `<tr class="insp"><td colspan="3">
-        <div class="insphead">${esc(g.label)} · ${pcs.length} pieces</div>
-        <div class="pourlists"><div class="lh">Embeds · whole pour</div>${emb}</div></td></tr>`;
+        <div class="insphead">${esc(g.label)} · ${pcs.length} ${L2(pcs.length === 1 ? "част" : "части", pcs.length === 1 ? "piece" : "pieces")}</div>
+        <div class="pourlists"><div class="lh">${L2("Закладни части · целият такт", "Embeds · whole pour")}</div>${emb}</div></td></tr>`;
   }
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const f1 = (v) => (Math.round(v * 10) / 10).toLocaleString("en-US");
-  const f0 = (v) => Math.round(v).toLocaleString("en-US");
+  // numbers in the interface language: BG "3 292" / "37,9", EN "3,292" / "37.9" (round 15 L8)
+  const fNum = (v, d) => (I18N && I18N.fmtNum ? I18N.fmtNum(v, ui, d) : (Math.round(v * 10 ** d) / 10 ** d).toLocaleString(ui === "en" ? "en-US" : "bg-BG"));
+  const f1 = (v) => fNum(v, 1);
+  const f0 = (v) => fNum(v, 0);
 
   function render() {
     const rows = $("rows");
     if (!state.pours.length) {
-      rows.innerHTML = `<tr><td colspan="3" class="empty">No numbered pours in the loaded models.</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="3" class="empty">${L2("В заредените модели няма номерирани тактове.", "No numbered pours in the loaded models.")}</td></tr>`;
       $("foot").innerHTML = "";
     } else {
       const shown = (g) => !state.selKeys || state.selKeys.has(g.key);
       const visible = state.pours.filter(shown);
       rows.innerHTML = !visible.length
-        ? `<tr><td colspan="3" class="empty">None of the selected objects is in a numbered pour.</td></tr>`
+        ? `<tr><td colspan="3" class="empty">${L2("Нито един от избраните обекти не е в номериран такт.", "None of the selected objects is in a numbered pour.")}</td></tr>`
         : state.pours.map((g, i) => {
         if (!shown(g)) return "";
         const tagged = state.tags.has(g.key);
         const types = g.types.map((t) => t.split("/")[0]).join(", ");
-        const emb = g.embeds.length ? `<div class="emb">Embeds ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
+        const emb = g.embeds.length ? `<div class="emb">${L2("Закладни", "Embeds")} ${esc(L.formatEmbeds(g.embeds))}</div>` : "";
         return `<tr>
           <td>${state.coloured ? `<span class="sw" style="background:${g.colour}"></span>` : ""}<span class="name">${esc(g.label)}</span><button
-              class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="Embedded parts of this pour">Inspect ${state.inspectKey === g.key ? "▴" : "▾"}</button>
-            <div class="sub">${g.objects.length} obj · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
-            ${g.models.length > 1 ? `<div class="sub">${g.models.length} models: ${esc(g.models.join(", "))}</div>` : ""}
-            <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? "Remove tag" : "Tag this pour"}">Tag</button><button
-              class="small secondary" data-act="select" data-i="${i}" title="Select this pour's objects and zoom to them">Select</button><button
-              class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? "Clear focus" : "Zoom and make everything else transparent"}">Focus</button></div></td>
-          <td class="num">${L.fmtVolume(g.totals.volume)}</td>
+              class="small inspect ${state.inspectKey === g.key ? "on" : "secondary"}" data-act="inspect" data-i="${i}" title="${L2("Закладните части на такта", "Embedded parts of this pour")}">${L2("Виж", "Inspect")} ${state.inspectKey === g.key ? "▴" : "▾"}</button>
+            <div class="sub">${g.objects.length} ${L2("об.", "obj")} · ${esc(types || "–")}${g.materials.length ? " · " + esc(g.materials.join(", ")) : ""}</div>${emb}
+            ${g.models.length > 1 ? `<div class="sub">${g.models.length} ${L2("модела", "models")}: ${esc(g.models.join(", "))}</div>` : ""}
+            <div class="acts"><button class="small ${tagged ? "on" : "secondary"}" data-act="tag" data-i="${i}" title="${tagged ? L2("Махни етикета", "Remove tag") : L2("Етикет на такта", "Tag this pour")}">${L2("Етикет", "Tag")}</button><button
+              class="small secondary" data-act="select" data-i="${i}" title="${L2("Избери обектите на такта и приближи", "Select this pour's objects and zoom to them")}">${L2("Избери", "Select")}</button><button
+              class="small ${state.focusKey === g.key ? "on" : "secondary"}" data-act="focus" data-i="${i}" title="${state.focusKey === g.key ? L2("Без фокус", "Clear focus") : L2("Приближи и направи всичко друго прозрачно", "Zoom and make everything else transparent")}">${L2("Фокус", "Focus")}</button></div></td>
+          <td class="num">${L.fmtVolume(g.totals.volume, ui)}</td>
           <td class="num">${f0(g.totals.rebar)}</td></tr>` + (state.inspectKey === g.key ? inspectRow(g) : "");
       }).join("");
       const t = visible.reduce((a, g) => ({ v: a.v + g.totals.volume, r: a.r + g.totals.rebar }), { v: 0, r: 0 });
-      $("foot").innerHTML = `<tr><td>${state.selKeys ? `Selected (${visible.length} of ${state.pours.length})` : `Total (${state.pours.length})`}</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
+      $("foot").innerHTML = `<tr><td>${state.selKeys ? L2(`Избрани (${visible.length} от ${state.pours.length})`, `Selected (${visible.length} of ${state.pours.length})`) : L2(`Общо (${state.pours.length})`, `Total (${state.pours.length})`)}</td><td class="num">${f1(t.v)}</td><td class="num">${f0(t.r)}</td></tr>`;
     }
     const unnumbered = state.pours.filter((g) => g.embeds.some((e) => L.isUnnumbered(e.code))).map((g) => g.label);
     $("embWarn").hidden = !unnumbered.length;
     $("embWarn").textContent = unnumbered.length
-      ? `Embed marks show "(?)" in ${unnumbered.join(", ")}: numbering was not up to date in Tekla when this was exported.`
+      ? L2(`Марките на закладните части са „(?)“ в ${unnumbered.join(", ")}: номерирането в Tekla не е било обновено при експорта.`, `Embed marks show "(?)" in ${unnumbered.join(", ")}: numbering was not up to date in Tekla when this was exported.`)
       : "";
     const loose = state.selKeys ? state.unnumbered.filter((g) => state.selKeys.has(g.key)) : state.unnumbered;
     $("looseBox").hidden = !loose.length;
     $("looseRows").innerHTML = loose.map((g, i) => `<tr>
-        <td><span class="name">"${esc(g.label)}"</span><div class="sub">${g.objects.length} obj · ${esc(g.types.map((t) => t.split("/")[0]).join(", ") || "–")}</div>
-          <div class="acts"><button class="small secondary" data-act="selectLoose" data-i="${state.unnumbered.indexOf(g)}" title="Select these objects and zoom to them">Select</button></div></td>
-        <td class="num">${L.fmtVolume(g.totals.volume)} m³</td></tr>`).join("");
+        <td><span class="name">"${esc(g.label)}"</span><div class="sub">${g.objects.length} ${L2("об.", "obj")} · ${esc(g.types.map((t) => t.split("/")[0]).join(", ") || "–")}</div>
+          <div class="acts"><button class="small secondary" data-act="selectLoose" data-i="${state.unnumbered.indexOf(g)}" title="${L2("Избери тези обекти и приближи", "Select these objects and zoom to them")}">${L2("Избери", "Select")}</button></div></td>
+        <td class="num">${L.fmtVolume(g.totals.volume, ui)} m³</td></tr>`).join("");
     $("btnClearFocus").hidden = state.focusKey == null;
     $("btnShowSel").className = "small " + (state.selKeys ? "on" : "secondary");
     $("btnShowAllRows").hidden = !state.selKeys;
@@ -361,7 +393,7 @@
       const k = index.get(m.modelId + ":" + id);
       if (k) keys.add(k); else unmatched.push({ modelId: m.modelId, id });
     }
-    if (!n) return setStatus("Nothing is selected in the model. Select pours first, then click Show selected.", true);
+    if (!n) return setStatus(L2("Нищо не е избрано в модела. Изберете тактове и натиснете „Покажи избраните“.", "Nothing is selected in the model. Select pours first, then click Show selected."), true);
     for (const o of unmatched.slice(0, 60)) {
       try {
         const unit = ((await api.viewer.getHierarchyParents(o.modelId, [o.id], 4)) || [])[0];
@@ -372,15 +404,15 @@
         }
       } catch {}
     }
-    if (!keys.size) return setStatus(`None of the ${n} selected objects belongs to a pour.`, true);
+    if (!keys.size) return setStatus(L2(`Нито един от избраните ${n} ${pl(n, "обект", "обекта")} не е в такт.`, `None of the ${n} selected objects belongs to a pour.`), true);
     state.selKeys = keys;
-    setStatus(`Showing the ${keys.size} pour${keys.size > 1 ? "s" : ""} of the selection (${n} objects).`);
+    setStatus(L2(`Показани са ${keys.size} ${pl(keys.size, "такт", "такта")} от избора (${n} ${pl(n, "обект", "обекта")}).`, `Showing the ${keys.size} pour${keys.size > 1 ? "s" : ""} of the selection (${n} objects).`));
     render();
   }
 
   function renderFieldOptions() {
     $("fields").innerHTML = L.FIELDS.map((f) =>
-      `<label class="chk"><input type="checkbox" data-field="${f.id}" ${settings.fields.includes(f.id) ? "checked" : ""}> ${esc(f.label)}</label>`).join("");
+      `<label class="chk"><input type="checkbox" data-field="${f.id}" ${settings.fields.includes(f.id) ? "checked" : ""}> ${esc(fieldName(f))}</label>`).join("");
     $("numLift").value = settings.lift;
     $("numSide").value = settings.side;
     $("selLang").value = settings.lang;
@@ -389,7 +421,7 @@
 
   // ---------- wiring ----------
   async function guarded(fn) {
-    try { await fn(); } catch (e) { setStatus("Error: " + errText(e), true); console.error(e); }
+    try { await fn(); } catch (e) { setStatus(I18N ? I18N.err(errText(e), ui) : "Error: " + errText(e), true); console.error(e); }
   }
   document.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-act]");
@@ -399,7 +431,7 @@
       if (b.dataset.act === "tag") {
         const g = state.pours[i];
         if (state.tags.has(g.key)) await removeTags([g.key]);
-        else if (!(await addTags([g]))) setStatus(`${g.label}: no geometry to anchor the tag`, true);
+        else if (!(await addTags([g]))) setStatus(`${g.label}: ${L2("няма геометрия за етикета", "no geometry to anchor the tag")}`, true);
         render();
       } else if (b.dataset.act === "inspect") {
         const g = state.pours[i];
@@ -411,7 +443,7 @@
     });
   });
   $("btnShowSel").onclick = () => guarded(showSelected);
-  $("btnShowAllRows").onclick = () => { state.selKeys = null; setStatus("Showing all pours"); render(); };
+  $("btnShowAllRows").onclick = () => { state.selKeys = null; setStatus(L2("Показани са всички тактове", "Showing all pours")); render(); };
   $("btnShowAll").onclick = () => guarded(showAll);
   $("btnClear").onclick = () => guarded(clearAll);
   $("btnClearFocus").onclick = () => guarded(clearFocus);
@@ -446,6 +478,8 @@
     const v = parseFloat(e.target.value);
     if (v > 0) { settings.lift = v; saveSettings(); guarded(refreshTags); }
   };
+  $("selUi").onchange = (e) => { ui = I18N ? I18N.setLang(e.target.value) : e.target.value; applyStatic(); renderFieldOptions(); render(); relabelStatus(); };
+  applyStatic();
   renderFieldOptions();
 
   // Re-read automatically when models are loaded or unloaded (debounced; the event fires in bursts).
@@ -460,7 +494,7 @@
       return;
     }
     if (event === "viewer.onModelStateChanged" && state.api) {
-      setStatus("Models changed, reading pours again…");
+      setStatus(L2("Моделите са променени, тактовете се четат отново…", "Models changed, reading pours again…"));
       clearTimeout(reloadTimer);
       reloadTimer = setTimeout(() => guarded(async () => {
         await removeTags([...state.tags.keys()]);
@@ -476,18 +510,27 @@
   let tokenHelper = null, denied = false;
   async function gate(api) {
     if (window.ARSTEN_DEMO) return true;
+    if (window.ArstenDiag) ArstenDiag.set({ panel: "Pour tags (pour-tags)", lang: () => ui });   // round 19 M1: before the access check, so a denied screen's diagnostics name the panel
     tokenHelper = ArstenAccess.tokenGetter(api);
-    setStatus("Checking access… / Проверка на достъпа…");
+    setStatus(L2("Проверка на достъпа…", "Checking access…"));
     const access = await ArstenAccess.check({ api, getToken: tokenHelper.getToken, app: "execution" });
     if (access.allowed) return true;
     denied = true;
-    ArstenAccess.renderDenied(document.body, settings.lang, access);   // the language chosen in this panel (round 11, L2)
+    ArstenAccess.renderDenied(document.body, ui, access);   // the interface language (A10; was the label language, round 11 L2)
     return false;
   }
 
   async function start(api) {
+    if (I18N) { const l = await I18N.pickLang(api, null); if (l !== ui) { ui = l; applyStatic(); renderFieldOptions(); } }   // stored choice, else the Connect user's language
     if (!(await gate(api))) return;   // no data is read before access is confirmed
     state.api = api;
+    // diagnostics: the interface language (not the tag language), and the signed-in user's name hidden (round 15 L3)
+    if (window.ArstenDiag) Promise.resolve().then(async () => {
+      let user = "";
+      try { const u = await api.user.getUser(); user = (u && ([u.firstName, u.lastName].filter(Boolean).join(" ") || u.email)) || ""; } catch {}
+      const p = await api.project.getProject();
+      ArstenDiag.set({ panel: "Pour tags (pour-tags)", projectId: p && p.id, redact: [user], lang: () => ui });
+    }).catch(() => {});   // A23
     await guarded(loadPours);
   }
   window.PourTagsApp = { start, state };   // used by demo.js
@@ -496,11 +539,12 @@
     if (/[?&]demo\b/.test(location.search)) {
       const s = document.createElement("script"); s.src = "demo.js?t=" + Date.now(); document.body.appendChild(s);
     } else {
-      setStatus("Not inside Trimble Connect. Add this extension to a project and open it from the 3D viewer side panel.", true);
+      setStatus(I18N ? I18N.word("notInside", ui) : "Not inside Trimble Connect.", true);
     }
     return;
   }
+  if (I18N) setStatus(I18N.word("connecting", ui));
   TrimbleConnectWorkspace.connect(window.parent, onEvent, 30000)
     .then((api) => start(api))
-    .catch((e) => setStatus("Could not connect to Trimble Connect: " + errText(e), true));
+    .catch((e) => setStatus((I18N ? I18N.word("connectFail", ui) : "Could not connect to Trimble Connect") + ": " + errText(e), true));
 })();
