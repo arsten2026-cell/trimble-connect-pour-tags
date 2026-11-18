@@ -1,17 +1,17 @@
 {
   "panel": "pour-tags",
   "repo": "arsten2026-cell/trimble-connect-pour-tags",
-  "id": "29f2f01d8b",
-  "built": "2026-11-17T21:10:51.718Z",
+  "id": "7c3232ef59",
+  "built": "2026-11-18T01:06:53.748Z",
   "files": {
-    "app.js": "09cf184686",
+    "app.js": "b5c7ce2bc7",
     "arsten-perf.js": "21f7454938",
     "arsten-diag.js": "bb0c6351fe",
-    "arsten-i18n.js": "de006467e2",
-    "pours.js": "66259dd1e6",
-    "arsten-access.js": "253829d007",
+    "arsten-i18n.js": "c58f01c9fc",
+    "pours.js": "a4b6b1a441",
+    "arsten-access.js": "fad565fcbe",
     "manifest.json": "0c933fbcc3",
     "icon.svg": "110b339690",
-    "index.html": "58f34d45d4"
+    "index.html": "668b93c894"
   }
 }

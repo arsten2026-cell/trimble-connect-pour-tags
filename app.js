@@ -21,6 +21,10 @@
     inspectKey: null,        // pour whose pieces are listed
     isolated: false,
   };
+  // When the panel last changed colours / visibility / opacity itself: Connect answers with onModelStateChanged, and
+  // loadOnce must not paint again because of its own calls (sweep 18.11.2026).
+  let ownStateAt = 0;
+  const OWN_MS = 5000;
 
   // ---------- settings (per viewer, kept in localStorage) ----------
   const SETTINGS_KEY = "arsten.pourTags.v2";   // v2: split formwork, language, layout
@@ -73,42 +77,32 @@
   const errText = (e) => (e && (e.message || e.toString())) || String(e);
 
   // ---------- reading the model ----------
+  /** getModels("loaded"); [] when the call fails (the model set then counts as changed). */
+  async function loadedSpecs() { try { return (await state.api.viewer.getModels("loaded")) || []; } catch { return []; } }
+  // A model version scanned in full without pour objects (sweep 18.11.2026, as Монолитен бетон): sessionStorage, so a
+  // stage switch or another open in this browser tab skips it (a stage with only steel or architecture loaded was read
+  // in full on every model event).
+  const scanCache = {
+    get: (k) => { try { const st = window.sessionStorage; return st ? JSON.parse(st.getItem(k) || "null") : null; } catch { return null; } },
+    set: (k, v) => { try { window.sessionStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    drop: (k) => { try { window.sessionStorage.removeItem(k); } catch {} },
+  };
   async function loadPours() {
     const api = state.api;
     setStatus(L2("Четене на тактовете от заредените модели…", "Reading pours from the loaded models…"));
     let modelObjs = await api.viewer.getObjects({ parameter: { class: PROXY } });
     const proxyCount = (modelObjs || []).reduce((n, m) => n + (m.objects || []).length, 0);
-    if (!proxyCount) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
-    const items = [];
+    const full = !proxyCount;
+    if (full) modelObjs = await api.viewer.getObjects();   // class filter found nothing: scan everything
+    const versions = new Map();
+    for (const m of await loadedSpecs()) if (m && m.versionId) { if (m.id != null) versions.set(m.id, m.versionId); versions.set(m.versionId, m.versionId); }
     const psetNames = new Map();
-    let scanned = 0;
-    for (const m of modelObjs || []) {
-      const ids = (m.objects || []).map((o) => o.id);
-      for (let i = 0; i < ids.length; i += BATCH) {
-        const chunk = ids.slice(i, i + BATCH);
-        const props = await api.viewer.getObjectProperties(m.modelId, chunk);
-        scanned += chunk.length;
-        const found = [];
-        for (const p of props || []) {
-          for (const s of p.properties || []) psetNames.set(s.name, (psetNames.get(s.name) || 0) + 1);
-          const pset = L.readPourPset(p);
-          if (pset) found.push({ modelId: m.modelId, id: p.id, name: p.product && p.product.name, props: pset });
-        }
-        if (found.length) {
-          let boxes = [];
-          try { boxes = await api.viewer.getObjectBoundingBoxes(m.modelId, found.map((f) => f.id)); } catch {}
-          const byId = new Map((boxes || []).map((b) => [b.id, b.boundingBox]));
-          for (const f of found) f.bbox = byId.get(f.id) || null;
-          // IFC GUIDs, to count a pour object once when it is in two loaded models
-          try {
-            const guids = await api.viewer.convertToObjectIds(m.modelId, found.map((f) => f.id));
-            found.forEach((f, k) => { f.guid = (guids && guids[k]) || null; });
-          } catch {}
-          items.push(...found);
-        }
-        setStatus(L2(`Четене на тактовете… проверени ${scanned} обекта, намерени ${items.length} обекта от тактове`, `Reading pours… ${scanned} objects checked, ${items.length} pour objects found`));
-      }
-    }
+    // 4 chunks at once, boxes and GUIDs side by side (sweep 18.11.2026; was one chunk at a time, three viewer calls in
+    // series per chunk). IFC GUIDs count a pour object once when it is in two loaded models.
+    const items = await L.scanPours(api.viewer, modelObjs, { batch: BATCH, limit: 4, full, versions, cache: scanCache, projectId: state.projectId,
+      onProps: (p) => { for (const s of p.properties || []) psetNames.set(s.name, (psetNames.get(s.name) || 0) + 1); },
+      onProgress: (k, n) => setStatus(L2(`Четене на тактовете… проверени ${k} обекта, намерени ${n} обекта от тактове`, `Reading pours… ${k} objects checked, ${n} pour objects found`)) });
+    const scanned = items.scanned, skipped = items.skipped;
     // Several models: pour numbers are project-wide, so they merge; never count a pour object twice.
     const models = await loadedModels(modelObjs);
     const names = new Map(models.map((m) => [m.modelId, m.name]));
@@ -123,9 +117,11 @@
     if (!items.length) {
       const seen = [...psetNames].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, c]) => `${n} (${c})`).join(", ");
       setStatus(() => L2(`Няма обекти от тактове: проверени ${scanned} обекта (${proxyCount} ${PROXY}), нито един с набор свойства ${L.PSET}. ` +
-        `Заредете Tekla IFC, експортиран с Arsten_PourExport.` + (seen ? ` Видени набори свойства: ${seen}` : ""),
+        `Заредете Tekla IFC, експортиран с Arsten_PourExport.` + (seen ? ` Видени набори свойства: ${seen}` : "") +
+        (skipped ? ` (${skipped} ${pl(skipped, "модел", "модела")} без тактове от по-рано: не са четени пак.)` : ""),
         `No pour objects found: ${scanned} objects checked (${proxyCount} ${PROXY}), none with property set ${L.PSET}. ` +
-        `Load a Tekla IFC exported with Arsten_PourExport.` + (seen ? ` Property sets seen: ${seen}` : "")), true);
+        `Load a Tekla IFC exported with Arsten_PourExport.` + (seen ? ` Property sets seen: ${seen}` : "") +
+        (skipped ? ` (${skipped} model${skipped > 1 ? "s" : ""} known to have no pours: not read again.)` : "")), true);
       console.warn("[pour-tags] property sets seen", Object.fromEntries(psetNames));
     } else {
       const loose = unnumbered.reduce((n, g) => n + g.objects.length, 0);
@@ -197,8 +193,12 @@
 
   async function removeTags(keys) {
     const ids = keys.map((k) => state.tags.get(k)).filter((id) => id != null);
-    if (ids.length) await state.api.markup.removeMarkups(ids);
-    keys.forEach((k) => state.tags.delete(k));
+    // removeMarkups throws for ids Connect already dropped (a model unloaded, Connect's own clear): the tags are gone
+    // either way, so forget them and go on. It used to keep them in state.tags, and every later reload failed at the
+    // same point and never read the models again (sweep 18.11.2026).
+    try { if (ids.length) await state.api.markup.removeMarkups(ids); }
+    catch (e) { console.warn("[pour-tags] removeMarkups", errText(e)); }
+    finally { keys.forEach((k) => state.tags.delete(k)); }
   }
 
   async function showAll() {
@@ -219,6 +219,7 @@
   // ---------- colours / isolate / zoom ----------
   async function applyColours() {
     const api = state.api;
+    ownStateAt = Date.now();
     const all = allPourObjects();
     if (!all.length) return;
     if (!state.coloured) {
@@ -228,12 +229,15 @@
     // one call per colour, not per pour (speed audit item 4); unnumbered grey last, as before
     const entries = state.pours.map((g) => ({ objects: g.objects, colour: g.colour }));
     if (state.unnumbered.length) entries.push({ objects: state.unnumbered.flatMap((g) => g.objects), colour: "#9E9E9E" });
-    for (const b of L.colourBatches(entries)) await api.viewer.setObjectState(selectorFor(b.objects), { color: b.colour });
+    // all colours at once (sweep 18.11.2026): colourBatches lists each object once (its last colour), so the batches
+    // are disjoint and the order of the calls cannot change the result - up to 12 bridge calls in parallel, not in series
+    await Promise.all(L.colourBatches(entries).map((b) => api.viewer.setObjectState(selectorFor(b.objects), { color: b.colour })));
   }
   // "Show pours only": viewer.isolateEntities (as in Cast unit tags and the MCP bridge). Hiding everything with an
   // undefined selector and then showing the pours left the pours hidden too.
   async function applyIsolate() {
     const api = state.api;
+    ownStateAt = Date.now();
     if (state.isolated) {
       const byModel = new Map();
       for (const o of allPourObjects()) { if (!byModel.has(o.modelId)) byModel.set(o.modelId, []); byModel.get(o.modelId).push(o.id); }
@@ -266,6 +270,7 @@
   // Only `objects` keep a colour and full opacity; everything else grey at 50%.
   async function applyFocus(objects, colour) {
     const api = state.api;
+    ownStateAt = Date.now();
     const mine = new Set(objects.map(objKey));
     const others = (await everyObject()).filter((o) => !mine.has(objKey(o)));
     if (others.length) await api.viewer.setObjectState(selectorFor(others), { color: FOCUS_GREY, opacity: FOCUS_OPACITY });
@@ -295,6 +300,7 @@
   }
   async function clearFocus() {
     if (state.focusKey == null) return;
+    ownStateAt = Date.now();
     await dropFocusTag();
     state.focusKey = null;
     render();
@@ -394,15 +400,12 @@
       if (k) keys.add(k); else unmatched.push({ modelId: m.modelId, id });
     }
     if (!n) return setStatus(L2("Нищо не е избрано в модела. Изберете тактове и натиснете „Покажи избраните“.", "Nothing is selected in the model. Select pours first, then click Show selected."), true);
-    for (const o of unmatched.slice(0, 60)) {
-      try {
-        const unit = ((await api.viewer.getHierarchyParents(o.modelId, [o.id], 4)) || [])[0];
-        if (!unit) continue;
-        for (const c of (await api.viewer.getHierarchyChildren(o.modelId, [unit.id], 4)) || []) {
-          const k = index.get(o.modelId + ":" + c.id);
-          if (k) { keys.add(k); break; }
-        }
-      } catch {}
+    // per model in chunks, units' children side by side (sweep 18.11.2026; was ~2 serial viewer calls per object)
+    if (unmatched.length) {
+      const r = await L.selectionPourKeys(unmatched, index,
+        (m, ids) => api.viewer.getHierarchyParents(m, ids, 4),
+        (m, unitId) => api.viewer.getHierarchyChildren(m, [unitId], 4));
+      for (const k of r.keys) keys.add(k);
     }
     if (!keys.size) return setStatus(L2(`Нито един от избраните ${n} ${pl(n, "обект", "обекта")} не е в такт.`, `None of the ${n} selected objects belongs to a pour.`), true);
     state.selKeys = keys;
@@ -447,12 +450,8 @@
   $("btnShowAll").onclick = () => guarded(showAll);
   $("btnClear").onclick = () => guarded(clearAll);
   $("btnClearFocus").onclick = () => guarded(clearFocus);
-  $("btnReload").onclick = () => guarded(async () => {
-    await clearFocus();
-    await removeTags([...state.tags.keys()]);
-    await loadPours();
-    await applyColours();
-  });
+  // through runLoad: never two reads at once; forced, so it reads again even for the same models (sweep 18.11.2026)
+  $("btnReload").onclick = () => runLoad(true);
   $("chkColour").onchange = (e) => guarded(async () => {
     state.coloured = e.target.checked;
     if (state.focusKey == null) await applyColours();   // during focus, colours come back on Clear focus
@@ -483,7 +482,54 @@
   renderFieldOptions();
 
   // Re-read automatically when models are loaded or unloaded (debounced; the event fires in bursts).
-  let reloadTimer = null;
+  // Never two reads at once (sweep 18.11.2026, the pour-status pattern): a stage that loads several models, a big model
+  // whose read takes longer than the debounce, or an event during the first load used to run two loadPours side by side,
+  // leaving duplicate or orphaned tags and the pour list of whichever read finished last (maybe the older model set).
+  // Now an event or a Reload click during a read only queues one more read, which runs right after it.
+  const RELOAD_MS = 3000;   // like the other panels; a stage loads its models in a burst of events
+  let reloadTimer = null, reloading = false, rerun = false, rerunForce = false;
+  /** force: the first load and the Reload button; a model event is not forced (loadOnce skips it for the same models). */
+  async function runLoad(force) {
+    if (reloading) { rerun = true; if (force) rerunForce = true; return; }
+    reloading = true;
+    try { await guarded(() => loadOnce(!!force)); }
+    finally {
+      reloading = false;
+      if (rerun) { const f = rerunForce; rerun = rerunForce = false; clearTimeout(reloadTimer); reloadTimer = null; runLoad(f); }
+    }
+  }
+  // Same models, nothing read again (sweep 18.11.2026, as Cast unit tags loadOnce). Connect fires onModelStateChanged for
+  // streaming and visibility changes too: ticking "Show pours only" after "Show all tags" removed every tag 3 s later and
+  // read the whole model again. Now the key of the loaded models (id@versionId) decides: the same key only puts the
+  // colours and "only pours" back and keeps the tags; a real change reads again and re-adds the tags that were shown.
+  let lastModelsKey = null;
+  async function loadOnce(force) {
+    const key = L.modelSetKey(await loadedSpecs());
+    if (!force && key != null && key === lastModelsKey) {
+      console.info("[pour-tags] model event: the loaded models did not change - no reload");
+      // our own colour / isolate / focus calls fire the event too: not again right after them (no endless repaint)
+      if (Date.now() - ownStateAt < OWN_MS) return;
+      if (state.coloured && state.focusKey == null) await applyColours();
+      if (state.isolated) await applyIsolate();
+      return;
+    }
+    lastModelsKey = null;
+    if (!force) setStatus(L2("Моделите са променени, тактовете се четат отново…", "Models changed, reading pours again…"));
+    // the tags shown by the user (not the one Focus added) come back after the read, for the pours still there
+    const keep = new Set([...state.tags.keys()].filter((k) => !(k === state.focusKey && state.focusTagAdded)));
+    try { await clearFocus(); } catch (e) { console.warn("[pour-tags] clear focus", errText(e)); state.focusKey = null; state.focusTagAdded = false; }
+    await removeTags([...state.tags.keys()]);
+    await loadPours();
+    lastModelsKey = key;
+    if (state.coloured) await applyColours();
+    if (state.isolated) await applyIsolate();   // the new objects of a changed model set are visible otherwise
+    const again = state.pours.filter((g) => keep.has(g.key));
+    if (again.length) { await addTags(again); render(); }
+  }
+  function scheduleReload(ms) {
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => { reloadTimer = null; runLoad(false); }, ms == null ? RELOAD_MS : ms);
+  }
   function onEvent(event, data) {
     if (tokenHelper) tokenHelper.onEvent(event, data);
     if (denied) return;
@@ -493,15 +539,8 @@
       render();
       return;
     }
-    if (event === "viewer.onModelStateChanged" && state.api) {
-      setStatus(L2("Моделите са променени, тактовете се четат отново…", "Models changed, reading pours again…"));
-      clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(() => guarded(async () => {
-        await removeTags([...state.tags.keys()]);
-        await loadPours();
-        if (state.coloured) await applyColours();
-      }), 1500);
-    }
+    // the status line says "reading again" only when the models really changed (loadOnce)
+    if (event === "viewer.onModelStateChanged" && state.api) scheduleReload();
   }
 
   // ---------- start ----------
@@ -531,9 +570,10 @@
       const p = await api.project.getProject();
       ArstenDiag.set({ panel: "Pour tags (pour-tags)", projectId: p && p.id, redact: [user], lang: () => ui });
     }).catch(() => {});   // A23
-    await guarded(loadPours);
+    try { const p = await api.project.getProject(); state.projectId = p && p.id; } catch {}   // key of the "no pours" marker
+    await runLoad(true);   // a model event during the first load waits for it (sweep 18.11.2026)
   }
-  window.PourTagsApp = { start, state };   // used by demo.js
+  window.PourTagsApp = { start, state, onEvent, runLoad, loadOnce, scheduleReload };   // used by demo.js and the tests
 
   if (window.parent === window) {
     if (/[?&]demo\b/.test(location.search)) {

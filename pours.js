@@ -493,7 +493,146 @@
     return [...out.values()];
   }
 
+  // ---------- scanning the model (sweep 18.11.2026) ----------
+  /** Run async jobs `n` at a time; results in the order of items. */
+  async function pool(items, n, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const k = next++; out[k] = await fn(items[k], k); } }));
+    return out;
+  }
+  /**
+   * "Show selected": pour keys of selected objects that are not pour objects themselves (e.g. rebar), traced through their
+   * PourUnit (ElementAssembly parent) to the pour object beside it (sweep 18.11.2026). Was getHierarchyParents([id]) and
+   * then getHierarchyChildren of its unit, one object after the other: a slab with its rebar = ~120 serial viewer calls
+   * before anything showed. Now the ids go per model in chunks (getParents takes an id array), the children of each unique
+   * unit are read `pool` at a time, and only ids those children do not cover (a chunk call that threw, or a viewer that
+   * answers a many-id call with the first id's parent only) are asked one by one, up to `maxOne` - never worse than before.
+   * objs: [{modelId, id}]; index: Map "modelId:id" -> pour key; getParents(modelId, ids) -> [{id}];
+   * getChildren(modelId, unitId) -> [{id}]. opts: chunk (200), parentPool (4), pool (8), max (2000), maxOne (60).
+   * Returns { keys: Set of pour keys, calls }.
+   */
+  async function selectionPourKeys(objs, index, getParents, getChildren, opts) {
+    const o = opts || {};
+    const chunk = o.chunk || 200, parentPool = o.parentPool || 4, poolN = o.pool || 8;
+    const keys = new Set();
+    let calls = 0;
+    const byModel = new Map();
+    for (const x of (objs || []).slice(0, o.max || 2000)) {
+      if (!byModel.has(x.modelId)) byModel.set(x.modelId, []);
+      byModel.get(x.modelId).push(x.id);
+    }
+    const units = new Map();      // "modelId:unitId" -> {modelId, id}
+    const addUnit = (m, p) => { if (p && p.id != null && !units.has(m + ":" + p.id)) units.set(m + ":" + p.id, { modelId: m, id: p.id }); };
+    const chunks = [];
+    for (const [m, ids] of byModel) for (let i = 0; i < ids.length; i += chunk) chunks.push({ m, ids: ids.slice(i, i + chunk) });
+    await pool(chunks, parentPool, async (c) => {
+      calls++;
+      try { for (const p of (await getParents(c.m, c.ids)) || []) addUnit(c.m, p); } catch { /* covered by the per-id pass below */ }
+    });
+    const read = new Set(), covered = new Set();
+    const readUnit = async (u) => {
+      const uk = u.modelId + ":" + u.id;
+      if (read.has(uk)) return;
+      read.add(uk);   // claimed at once, so two workers never ask for the same unit
+      let list = [];
+      try { calls++; list = (await getChildren(u.modelId, u.id)) || []; } catch {}
+      let found = false;
+      for (const c of list) {
+        const ck = u.modelId + ":" + c.id;
+        covered.add(ck);
+        // the first child that is a pour object names the pour; the rest only mark ids as covered
+        if (!found) { const k = index.get(ck); if (k) { keys.add(k); found = true; } }
+      }
+    };
+    await pool([...units.values()], poolN, readUnit);
+    const rest = [];
+    for (const [m, ids] of byModel) for (const id of ids) if (!covered.has(m + ":" + id)) rest.push({ modelId: m, id });
+    const one = rest.slice(0, o.maxOne == null ? 60 : o.maxOne);
+    // each worker takes its own run of neighbouring ids, in series: once a worker found a unit the next bars are covered
+    const runs = [];
+    const step = Math.ceil(one.length / poolN) || 1;
+    for (let i = 0; i < one.length; i += step) runs.push(one.slice(i, i + step));
+    await pool(runs, poolN, async (run) => {
+      for (const x of run) {
+        if (covered.has(x.modelId + ":" + x.id)) continue;
+        calls++;
+        try {
+          const unit = ((await getParents(x.modelId, [x.id])) || [])[0];
+          if (unit && unit.id != null) await readUnit({ modelId: x.modelId, id: unit.id });
+        } catch {}
+      }
+    });
+    return { keys, calls };
+  }
+  /** Key of the loaded models, as Монолитен бетон / Cast unit tags (modelSetKey): every model as "id@versionId", sorted.
+   *  null when it cannot be compared safely (nothing loaded, or a model without id / versionId): then the panel reads again. */
+  function modelSetKey(specs) {
+    if (!Array.isArray(specs) || !specs.length) return null;
+    const out = new Set();
+    for (const m of specs) {
+      if (!m || m.id == null || m.id === "" || m.versionId == null || m.versionId === "") return null;
+      out.add(String(m.id) + "@" + String(m.versionId));
+    }
+    return [...out].sort().join("|");
+  }
+  /** sessionStorage key of "this model version has no Pour/Такт objects". The same key as Монолитен бетон (U.noPourKey):
+   *  the meaning is the same, so a stage already scanned by either panel is skipped by both. */
+  const noPourKey = (projectId, modelId, ver) => `arsten.pourScan.v1.${projectId || "?"}.${modelId}@${ver}`;
+  /**
+   * Pour objects of the loaded models, as Монолитен бетон (U.scanPours). Was strictly one chunk after the other with three
+   * viewer calls in series per chunk; now `limit` chunks at once, boxes and GUIDs side by side. Results keep the
+   * model / chunk order. Unlike Монолитен бетон an object without a GUID is kept (the de-duplication skips it, as before).
+   * viewer: api.viewer (passed in; no Workspace API is held here).
+   * o: {batch, limit, full, versions: Map modelId -> versionId, cache: {get, set, drop}, projectId,
+   *     onProps(record) for every property record read (pset counting), onProgress(scanned, found)}
+   * o.full (the class filter found nothing, every object is read): a model version remembered without pour objects is
+   * skipped, and one scanned without any is remembered. Returns the items; .skipped = models skipped that way.
+   */
+  async function scanPours(viewer, modelObjs, o) {
+    o = o || {};
+    const batch = o.batch || 200, limit = o.limit || 4;
+    const items = [];
+    let skipped = 0, scanned = 0, found = 0;
+    for (const m of modelObjs || []) {
+      const ids = (m.objects || []).map((x) => x.id);
+      if (!ids.length) continue;
+      const ver = o.versions && o.versions.get(m.modelId);
+      const key = o.full && ver && o.cache ? noPourKey(o.projectId, m.modelId, ver) : null;
+      if (key) { const c = o.cache.get(key); if (c && c.hasPours === false && c.n === ids.length) { skipped++; continue; } }
+      const chunks = [];
+      for (let i = 0; i < ids.length; i += batch) chunks.push(ids.slice(i, i + batch));
+      const per = await pool(chunks, limit, async (chunk) => {
+        const props = (await viewer.getObjectProperties(m.modelId, chunk)) || [];
+        const got = [];
+        for (const p of props) {
+          if (o.onProps) o.onProps(p);
+          const ps = readPourPset(p);
+          if (ps) got.push({ modelId: m.modelId, id: p.id, name: p.product && p.product.name, props: ps });
+        }
+        if (got.length) {
+          const fid = got.map((f) => f.id);
+          const [boxes, guids] = await Promise.all([
+            Promise.resolve().then(() => viewer.getObjectBoundingBoxes(m.modelId, fid)).catch(() => null),   // boxes are optional
+            Promise.resolve().then(() => viewer.convertToObjectIds(m.modelId, fid)).catch(() => null)]);       // so are GUIDs (dedupe only)
+          const byId = new Map((boxes || []).map((b) => [b.id, b.boundingBox]));
+          got.forEach((f, k) => { f.bbox = byId.get(f.id) || null; f.guid = (guids && guids[k]) || null; });
+        }
+        scanned += chunk.length; found += got.length;
+        if (o.onProgress) o.onProgress(scanned, found);
+        return got;
+      });
+      const got = [].concat(...per);
+      items.push(...got);
+      if (key) { if (got.length) o.cache.drop(key); else o.cache.set(key, { n: ids.length, hasPours: false }); }
+    }
+    items.skipped = skipped;
+    items.scanned = scanned;
+    return items;
+  }
+
   return {
+    pool, modelSetKey, noPourKey, scanPours, selectionPourKeys,
     PSET, P, R, FIELDS, PALETTE, readPourPset, readPset, summariseRebars, pourRebarList, rebarMismatch, parseRebarList, sumRebarLists, parseParts, num, pourKey, parseEmbeds, mergeEmbeds, formatEmbeds, isUnnumbered,
     naturalCompare, groupPours, dedupePourObjects, shortModelName, pickAnchorObject, topCentre, pourCentre, tagPlacement, siteCentre, labelParts, labelText, fmtVolume, colourFor, hexToRgba,
     colourBatches,

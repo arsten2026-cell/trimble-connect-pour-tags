@@ -50,6 +50,20 @@
   [hidden] { display:none !important; }
   .warn { background:#fff4e5; border:1px solid #f0c48a; padding:8px; font-size:12px; margin-top:6px; }
   .empty { color:var(--muted); font-size:12px; padding:8px 0; }
+  /* touch screens (A1, as Монолитен бетон; sweep 18.11.2026): ~40 px targets, 16 px inputs (no iOS zoom). The Tag /
+     Select / Focus / Inspect buttons were ~20 px high side by side: mis-taps on a phone. They now wrap and keep a gap. */
+  @media (pointer: coarse) {
+    button, button.small, select, input[type=number] { min-height:40px; }
+    button.small, .acts button.small, button.inspect { padding:6px 12px; font-size:14px; }
+    select, input[type=number] { font-size:16px; padding:6px 8px; }
+    input[type=number] { width:72px; }
+    input[type=checkbox] { width:22px; height:22px; }
+    label.chk { min-height:40px; font-size:14px; }
+    .bar { gap:8px; }
+    .acts { white-space:normal; display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+    .acts button.small + button.small { margin-left:0; }
+    button.inspect { margin-left:6px; vertical-align:middle; }
+  }
 </style>
 </head>
 <body>
@@ -98,9 +112,9 @@
 <script src="https://cdn.jsdelivr.net/npm/trimble-connect-workspace-api@0.3.38/dist/iife/trimbleconnect.workspace.api.js" integrity="sha384-lFiNt/56q6HnUNbuy0WHO3NP6BkQjY4EH8+5eELYVfnhkB42snRTmSa3UOAlX9gg" crossorigin="anonymous"></script>
 <script src="arsten-perf.js?v=21f7454938"></script>
 <script src="arsten-diag.js?v=bb0c6351fe"></script>
-<script src="arsten-i18n.js?v=de006467e2"></script>
-<script src="arsten-access.js?v=253829d007"></script>
-<script src="pours.js?v=66259dd1e6"></script>
-<script src="app.js?v=09cf184686"></script>
+<script src="arsten-i18n.js?v=c58f01c9fc"></script>
+<script src="arsten-access.js?v=fad565fcbe"></script>
+<script src="pours.js?v=a4b6b1a441"></script>
+<script src="app.js?v=b5c7ce2bc7"></script>
 </body>
 </html>
